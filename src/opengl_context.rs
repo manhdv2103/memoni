@@ -1,4 +1,5 @@
 use crate::x11_window::X11Window;
+use anyhow::{Context as _, Result};
 use egui_glow::Painter;
 use glow::Context as GlowContext;
 use glutin::{
@@ -26,7 +27,7 @@ pub struct OpenGLContext<'a> {
 }
 
 impl<'a> OpenGLContext<'a> {
-    pub unsafe fn new(window: &'a X11Window) -> Result<Self, Box<dyn std::error::Error>> {
+    pub unsafe fn new(window: &'a X11Window) -> Result<Self> {
         let display_handle = XcbDisplayHandle::new(
             NonNull::new(window.conn.get_raw_xcb_connection()),
             window.screen_num as _,
@@ -51,7 +52,7 @@ impl<'a> OpenGLContext<'a> {
             gl_display
                 .find_configs(config_template_builder.build())?
                 .next()
-                .ok_or("No suitable config found")?
+                .context("No suitable config found")?
         };
 
         let attrs = ContextAttributesBuilder::new()
@@ -99,7 +100,7 @@ impl<'a> OpenGLContext<'a> {
         &mut self,
         egui_ctx: &egui::Context,
         full_output: egui::FullOutput,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<()> {
         let egui::FullOutput {
             platform_output: _,
             mut textures_delta,

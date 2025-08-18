@@ -2,6 +2,7 @@ use crate::{
     utils::{is_printable_char, keysym_to_egui_key},
     x11_window::X11Window,
 };
+use anyhow::Result;
 use egui::{Event, PointerButton, Pos2, RawInput};
 use x11rb::{
     connection::Connection as _,
@@ -20,7 +21,7 @@ pub struct Input {
 }
 
 impl Input {
-    pub fn new(window: &X11Window) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(window: &X11Window) -> Result<Self> {
         let window_setup = window.conn.setup();
         let min_keycode = window_setup.min_keycode;
         let max_keycode = window_setup.max_keycode;

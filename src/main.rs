@@ -3,13 +3,14 @@ mod opengl_context;
 mod utils;
 mod x11_window;
 
+use anyhow::Result;
 use input::Input;
 use opengl_context::OpenGLContext;
 use x11_window::X11Window;
 use x11rb::connection::Connection;
 use x11rb::protocol::Event;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<()> {
     let width = 420u16;
     let height = 550u16;
     let background_color = 0x191919;

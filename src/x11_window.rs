@@ -2,6 +2,7 @@ extern crate x11rb;
 
 use std::cmp;
 
+use anyhow::Result;
 use x11rb::connection::Connection;
 use x11rb::protocol::randr::ConnectionExt as _;
 use x11rb::protocol::xproto::{ConnectionExt as _, *};
@@ -35,11 +36,7 @@ pub struct X11Window {
 }
 
 impl X11Window {
-    pub fn new(
-        width: u16,
-        height: u16,
-        background_color: u32,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(width: u16, height: u16, background_color: u32) -> Result<Self> {
         let (conn, screen_num) = XCBConnection::connect(None)?;
         let setup = conn.setup();
         let screen = setup.roots[screen_num].to_owned();
@@ -109,13 +106,13 @@ impl X11Window {
         })
     }
 
-    pub fn map_window(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn map_window(&self) -> Result<()> {
         self.conn.map_window(self.win_id)?;
         self.conn.flush()?;
         Ok(())
     }
 
-    pub fn grab_input(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn grab_input(&self) -> Result<()> {
         let grab_keyboard = self.conn.grab_keyboard(
             true,
             self.screen.root,
@@ -140,7 +137,7 @@ impl X11Window {
         Ok(())
     }
 
-    pub fn ungrab_input(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn ungrab_input(&self) -> Result<()> {
         let ungrab_keyboard = self.conn.ungrab_keyboard(x11rb::CURRENT_TIME)?;
         ungrab_keyboard.check()?;
 
@@ -157,7 +154,7 @@ fn calculate_window_pos(
     atoms: &Atoms,
     width: u16,
     height: u16,
-) -> Result<(i16, i16), Box<dyn std::error::Error>> {
+) -> Result<(i16, i16)> {
     let spacing = 10;
     let pointer = conn.query_pointer(screen.root)?.reply()?;
     let px = pointer.root_x as i32;
@@ -228,7 +225,7 @@ fn get_current_desktop_viewport(
     conn: &XCBConnection,
     screen: &Screen,
     atoms: &Atoms,
-) -> Result<Option<Viewport>, Box<dyn std::error::Error>> {
+) -> Result<Option<Viewport>> {
     let reply = conn
         .get_property(
             false,
@@ -255,7 +252,7 @@ fn get_desktop_viewports(
     conn: &XCBConnection,
     screen: &Screen,
     atoms: &Atoms,
-) -> Result<Vec<Viewport>, Box<dyn std::error::Error>> {
+) -> Result<Vec<Viewport>> {
     let reply = conn
         .get_property(
             false,

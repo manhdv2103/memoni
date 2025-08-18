@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+anyhow = "1.0.99"
 egui = "0.32.0"
 egui_glow = { version = "0.32.0", default-features = false, features = ["x11"]}
 glow = "0.16.0"
