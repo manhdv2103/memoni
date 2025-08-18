@@ -3,6 +3,8 @@ mod opengl_context;
 mod utils;
 mod x11_window;
 
+use std::sync::mpsc::channel;
+
 use anyhow::Result;
 use input::Input;
 use opengl_context::OpenGLContext;
@@ -19,6 +21,13 @@ fn main() -> Result<()> {
     let mut gl_context = unsafe { OpenGLContext::new(&window)? };
     let mut input = Input::new(&window)?;
     let egui_ctx = egui::Context::default();
+
+    let (ctrlc_tx, ctrlc_rx) = channel();
+    ctrlc::set_handler(move || {
+        ctrlc_tx
+            .send(())
+            .expect("Could not send signal on channel.")
+    })?;
 
     window.map_window()?;
     window.grab_input()?;
@@ -42,7 +51,8 @@ fn main() -> Result<()> {
             });
         });
 
-        if quit {
+        if quit || ctrlc_rx.try_recv().is_ok() {
+            window.ungrab_input()?;
             return Ok(());
         }
 
