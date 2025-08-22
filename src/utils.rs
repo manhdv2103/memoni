@@ -125,3 +125,18 @@ pub fn is_printable_char(chr: char) -> bool {
 
     !is_in_private_use_area && !chr.is_ascii_control()
 }
+
+pub fn is_plaintext_mime(mime: &str) -> bool {
+    const TEXT_MIMES: &[&str] = &[
+        "",
+        "text",
+        "string",
+        "utf8_string",
+        "text/plain",
+        "text/plain;charset=utf-8",
+        "text/plain;charset=us-ascii",
+        "text/plain;charset=unicode",
+    ];
+
+    TEXT_MIMES.iter().any(|b| mime.eq_ignore_ascii_case(b))
+}

@@ -43,7 +43,7 @@ impl Input {
         })
     }
 
-    pub fn handle_event(&mut self, event: X11Event) {
+    pub fn handle_event(&mut self, event: &X11Event) {
         let modifiers = &mut self.egui_input.modifiers;
 
         let egui_event = match event {

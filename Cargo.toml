@@ -4,12 +4,14 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+ahash = { version = "0.8.12", default-features = false }
 anyhow = "1.0.99"
+bincode = "2.0.1"
 ctrlc = { version = "3.4.7", features = ["termination"] }
 egui = "0.32.0"
 egui_glow = { version = "0.32.0", default-features = false, features = ["x11"] }
 glow = "0.16.0"
 glutin = { version = "0.32.3", default-features = false, features = ["egl", "x11"] }
 raw-window-handle = "0.6.2"
-x11rb = { version = "0.13.1", features = ["allow-unsafe-code", "randr"] }
+x11rb = { version = "0.13.1", features = ["allow-unsafe-code", "randr", "xfixes"] }
 xkeysym = "0.2.1"
