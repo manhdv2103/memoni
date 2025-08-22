@@ -13,5 +13,6 @@ egui_glow = { version = "0.32.0", default-features = false, features = ["x11"] }
 glow = "0.16.0"
 glutin = { version = "0.32.3", default-features = false, features = ["egl", "x11"] }
 raw-window-handle = "0.6.2"
+rustix = { version = "0.38.44", default-features = false, features = ["system"] }
 x11rb = { version = "0.13.1", features = ["allow-unsafe-code", "randr", "xfixes"] }
 xkeysym = "0.2.1"

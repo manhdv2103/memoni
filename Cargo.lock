@@ -666,6 +666,7 @@ dependencies = [
  "glow",
  "glutin",
  "raw-window-handle",
+ "rustix 0.38.44",
  "x11rb",
  "xkeysym",
 ]

@@ -1,6 +1,7 @@
 extern crate x11rb;
 
-use std::cmp;
+use std::os::unix::ffi::OsStringExt as _;
+use std::{cmp, ffi::OsString};
 
 use anyhow::Result;
 use x11rb::connection::Connection;
@@ -12,10 +13,14 @@ use x11rb::xcb_ffi::XCBConnection;
 x11rb::atom_manager! {
     pub Atoms: AtomsCookie {
         WM_PROTOCOLS,
-        _NET_WM_NAME,
+        WM_CLIENT_MACHINE,
         UTF8_STRING,
         _NET_CURRENT_DESKTOP,
         _NET_DESKTOP_VIEWPORT,
+        _NET_WM_NAME,
+        _NET_WM_PID,
+        _NET_WM_STATE,
+        _NET_WM_STATE_ABOVE,
     }
 }
 
@@ -93,6 +98,28 @@ impl X11Window {
             AtomEnum::WM_CLASS,
             AtomEnum::STRING,
             b"memoni\0Memoni\0",
+        )?;
+
+        conn.change_property32(
+            PropMode::REPLACE,
+            win_id,
+            atoms._NET_WM_STATE,
+            AtomEnum::ATOM,
+            &[atoms._NET_WM_STATE_ABOVE],
+        )?;
+        conn.change_property32(
+            PropMode::REPLACE,
+            win_id,
+            atoms._NET_WM_PID,
+            AtomEnum::CARDINAL,
+            &[std::process::id()],
+        )?;
+        conn.change_property8(
+            PropMode::REPLACE,
+            win_id,
+            atoms.WM_CLIENT_MACHINE,
+            AtomEnum::STRING,
+            get_hostname().to_string_lossy().as_bytes(),
         )?;
         conn.flush()?;
 
@@ -284,4 +311,8 @@ fn get_desktop_viewports(
         .collect::<Vec<_>>();
 
     Ok(viewports)
+}
+
+fn get_hostname() -> OsString {
+    OsString::from_vec(rustix::system::uname().nodename().to_bytes().to_vec())
 }
