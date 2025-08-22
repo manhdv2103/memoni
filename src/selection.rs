@@ -1,6 +1,9 @@
 extern crate x11rb;
 
-use std::collections::{HashMap, VecDeque};
+use std::{
+    collections::{HashMap, VecDeque},
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context as _, Result};
 use x11rb::connection::RequestConnection as _;
@@ -19,6 +22,7 @@ use crate::{atom_pool::AtomPool, utils::is_plaintext_mime, x11_window::X11Window
 
 const HASH_SEED: usize = 0xfd9aadcf54cc0f35;
 const BINCODE_CONFIG: bincode::config::Configuration = bincode::config::standard();
+const OVERDUE_TIMEOUT: Duration = Duration::from_secs(3);
 
 x11rb::atom_manager! {
     pub Atoms: AtomsCookie {
@@ -49,6 +53,21 @@ enum TaskState {
 
 struct Task {
     state: TaskState,
+    last_update: Instant,
+}
+
+impl Task {
+    fn new(state: TaskState) -> Self {
+        Task {
+            state,
+            last_update: Instant::now(),
+        }
+    }
+
+    fn set_state(&mut self, state: TaskState) {
+        self.state = state;
+        self.last_update = Instant::now();
+    }
 }
 
 pub struct Selection<'a> {
@@ -206,10 +225,10 @@ impl<'a> Selection<'a> {
                             .check()?;
                         }
 
-                        task.state = TaskState::PendingSelection {
+                        task.set_state(TaskState::PendingSelection {
                             mimes,
                             data: HashMap::new(),
-                        };
+                        });
 
                         Ok(())
                     }
@@ -271,17 +290,21 @@ impl<'a> Selection<'a> {
                 )?
                 .check()?;
 
-                self.tasks.insert(
-                    transfer_atom,
-                    Task {
-                        state: TaskState::TargetsRequest,
-                    },
-                );
+                self.tasks
+                    .insert(transfer_atom, Task::new(TaskState::TargetsRequest));
             }
             _ => {}
         }
 
+        self.purge_overdue_tasks();
+
         Ok(())
+    }
+
+    fn purge_overdue_tasks(&mut self) {
+        let now = Instant::now();
+        self.tasks
+            .retain(|_, task| now.duration_since(task.last_update) < OVERDUE_TIMEOUT);
     }
 }
 
