@@ -39,6 +39,7 @@ pub struct X11Window {
     pub width: u16,
     pub height: u16,
     pub background_color: u32,
+    win_event_mask: EventMask,
 }
 
 impl X11Window {
@@ -50,14 +51,13 @@ impl X11Window {
 
         let atoms = Atoms::new(&conn)?.reply()?;
 
+        let win_event_mask = EventMask::EXPOSURE
+            | EventMask::STRUCTURE_NOTIFY
+            | EventMask::BUTTON_PRESS
+            | EventMask::BUTTON_RELEASE
+            | EventMask::POINTER_MOTION;
         let win_aux = CreateWindowAux::new()
-            .event_mask(
-                EventMask::EXPOSURE
-                    | EventMask::STRUCTURE_NOTIFY
-                    | EventMask::BUTTON_PRESS
-                    | EventMask::BUTTON_RELEASE
-                    | EventMask::POINTER_MOTION,
-            )
+            .event_mask(win_event_mask)
             .background_pixel(background_color)
             .win_gravity(Gravity::NORTH_WEST)
             .override_redirect(1);
@@ -132,11 +132,18 @@ impl X11Window {
             width,
             height,
             background_color,
+            win_event_mask,
         })
     }
 
     pub fn map_window(&self) -> Result<()> {
         self.conn.map_window(self.win_id)?;
+        self.conn.flush()?;
+        Ok(())
+    }
+
+    pub fn unmap_window(&self) -> Result<()> {
+        self.conn.unmap_window(self.win_id)?;
         self.conn.flush()?;
         Ok(())
     }
@@ -172,6 +179,24 @@ impl X11Window {
 
         let ungrab_pointer = self.conn.ungrab_pointer(x11rb::CURRENT_TIME)?;
         ungrab_pointer.check()?;
+
+        Ok(())
+    }
+
+    pub fn enable_events(&self) -> Result<()> {
+        self.conn.change_window_attributes(
+            self.win_id,
+            &ChangeWindowAttributesAux::new().event_mask(self.win_event_mask),
+        )?;
+
+        Ok(())
+    }
+
+    pub fn disable_events(&self) -> Result<()> {
+        self.conn.change_window_attributes(
+            self.win_id,
+            &ChangeWindowAttributesAux::new().event_mask(EventMask::NO_EVENT),
+        )?;
 
         Ok(())
     }
