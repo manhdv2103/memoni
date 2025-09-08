@@ -1,8 +1,8 @@
-use anyhow::Result;
-use memoni::opengl_context::OpenGLContext;
+use anyhow::{Result, bail};
 use memoni::selection::Selection;
 use memoni::x11_window::X11Window;
 use memoni::{input::Input, utils::is_plaintext_mime};
+use memoni::{opengl_context::OpenGLContext, selection::SelectionType};
 use mio::{net::UnixListener, unix::SourceFd};
 use signal_hook::consts::TERM_SIGNALS;
 use signal_hook_mio::v1_0::Signals;
@@ -30,26 +30,29 @@ enum Args {
     Server(ServerArgs),
 }
 
-struct ClientArgs {}
+struct ClientArgs {
+    selection: SelectionType,
+}
 
-struct ServerArgs {}
+struct ServerArgs {
+    selection: SelectionType,
+}
 
 fn main() -> Result<()> {
     let args = parse_args()?;
 
     let socket_dir = Path::new(SOCKET_DIR);
     fs::create_dir_all(socket_dir)?;
-    let socket_path = socket_dir.join("memoni.sock");
 
     match args {
-        Args::Client(ClientArgs {}) => client(socket_path)?,
-        Args::Server(ServerArgs {}) => server(socket_path)?,
+        Args::Client(args) => client(args, socket_dir)?,
+        Args::Server(args) => server(args, socket_dir)?,
     }
 
     Ok(())
 }
 
-fn parse_args() -> Result<Args, lexopt::Error> {
+fn parse_args() -> Result<Args> {
     use lexopt::prelude::*;
 
     let mut parser = lexopt::Parser::from_env();
@@ -61,38 +64,69 @@ fn parse_args() -> Result<Args, lexopt::Error> {
         is_server_mode
     });
 
-    if is_server_mode {
-        // TODO:
-        // while let Some(arg) = parser.next()? {
-        //     match arg {
-        //         Short('h') | Long("help") => {
-        //             println!("Usage: hello [-n|--number=NUM] [--shout] THING");
-        //             std::process::exit(0);
-        //         }
-        //         _ => return Err(arg.unexpected()),
-        //     }
-        // }
+    let mut selection_type = SelectionType::CLIPBOARD;
+    while let Some(arg) = parser.next()? {
+        match arg {
+            Short('s') | Long("selection") => {
+                let selection_str: String = parser.value()?.parse()?;
+                selection_type = match selection_str.as_str() {
+                    "PRIMARY" => SelectionType::PRIMARY,
+                    "CLIPBOARD" => SelectionType::CLIPBOARD,
+                    _ => bail!("invalid selection type \"{selection_str}\""),
+                };
+            }
+            Short('h') | Long("help") => {
+                if is_server_mode {
+                    println!(
+                        "\
+Start memoni server.
 
-        return Ok(Args::Server(ServerArgs {}));
+USAGE:
+  memoni server [OPTIONS]
+
+OPTIONS:
+  -s, --selection TYPE    Sets selection type [possible values: PRIMARY, CLIPBOARD] [default: PRIMARY]
+  -h, --help              Prints help information"
+                    );
+                } else {
+                    println!(
+                        "\
+Show memoni window if memoni server is running.
+To run in server mode, use: memoni server [OPTIONS]
+
+USAGE:
+  memoni [OPTIONS]
+
+OPTIONS:
+  -s, --selection TYPE    Sets selection type [possible values: PRIMARY, CLIPBOARD] [default: PRIMARY]
+  -h, --help              Prints help information"
+                    );
+                }
+
+                std::process::exit(0);
+            }
+            _ => return Err(arg.unexpected().into()),
+        }
     }
 
-    // TODO:
-    // while let Some(arg) = parser.next()? {
-    //     match arg {
-    //         // Short('h') | Long("help") => {
-    //         //     println!("Usage: hello [-n|--number=NUM] [--shout] THING");
-    //         //     std::process::exit(0);
-    //         // }
-    //         _ => return Err(arg.unexpected()),
-    //     }
-    // }
-
-    Ok(Args::Client(ClientArgs {}))
+    Ok(if is_server_mode {
+        Args::Server(ServerArgs {
+            selection: selection_type,
+        })
+    } else {
+        Args::Client(ClientArgs {
+            selection: selection_type,
+        })
+    })
 }
 
-fn client<P: AsRef<Path>>(socket_path: P) -> Result<()> {
+fn client(args: ClientArgs, socket_dir: &Path) -> Result<()> {
+    let socket_path = socket_dir.join(format!("{}.sock", args.selection));
     if !fs::exists(&socket_path)? {
-        eprintln!("Error: memoni server is not running");
+        eprintln!(
+            "Error: memoni server for selection '{}' is not running",
+            args.selection
+        );
         std::process::exit(1);
     }
 
@@ -102,7 +136,7 @@ fn client<P: AsRef<Path>>(socket_path: P) -> Result<()> {
     Ok(())
 }
 
-fn server<P: AsRef<Path>>(socket_path: P) -> Result<()> {
+fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
     let width = 420u16;
     let height = 550u16;
     let background_color = 0x191919;
@@ -110,7 +144,7 @@ fn server<P: AsRef<Path>>(socket_path: P) -> Result<()> {
     let window = X11Window::new(width, height, background_color)?;
     let mut gl_context = unsafe { OpenGLContext::new(&window)? };
     let mut input = Input::new(&window)?;
-    let mut selection = Selection::new(&window)?;
+    let mut selection = Selection::new(&window, args.selection.clone())?;
     let egui_ctx = egui::Context::default();
 
     let mut poll = mio::Poll::new()?;
@@ -124,10 +158,14 @@ fn server<P: AsRef<Path>>(socket_path: P) -> Result<()> {
     poll.registry()
         .register(&mut signals, SIGNAL_TOKEN, mio::Interest::READABLE)?;
 
+    let socket_path = socket_dir.join(format!("{}.sock", args.selection));
     let mut listener = match UnixListener::bind(&socket_path) {
         Ok(listener) => listener,
         Err(ref e) if e.kind() == std::io::ErrorKind::AddrInUse => {
-            eprintln!("Error: another server is already running");
+            eprintln!(
+                "Error: another server for selection '{}' is already running",
+                args.selection
+            );
             std::process::exit(1);
         }
         Err(e) => return Err(e.into()),

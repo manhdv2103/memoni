@@ -2,6 +2,7 @@ extern crate x11rb;
 
 use std::{
     collections::{HashMap, VecDeque},
+    fmt,
     time::{Duration, Instant},
 };
 
@@ -40,6 +41,17 @@ x11rb::atom_manager! {
 pub struct SelectionItem {
     pub id: u64,
     pub data: HashMap<String, Vec<u8>>,
+}
+
+#[derive(Debug, Clone)]
+pub enum SelectionType {
+    PRIMARY,
+    CLIPBOARD,
+}
+impl fmt::Display for SelectionType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
 }
 
 #[derive(Debug)]
@@ -81,7 +93,7 @@ pub struct Selection<'a> {
 }
 
 impl<'a> Selection<'a> {
-    pub fn new(window: &'a X11Window) -> Result<Self> {
+    pub fn new(window: &'a X11Window, selection_type: SelectionType) -> Result<Self> {
         let conn = &window.conn;
         let root = window.screen.root;
 
@@ -125,7 +137,10 @@ impl<'a> Selection<'a> {
         xfixes::select_selection_input(
             conn,
             root,
-            atoms.CLIPBOARD,
+            match selection_type {
+                SelectionType::PRIMARY => atoms.PRIMARY,
+                SelectionType::CLIPBOARD => atoms.CLIPBOARD,
+            },
             SelectionEventMask::SET_SELECTION_OWNER,
         )?;
 
