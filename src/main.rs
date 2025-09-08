@@ -225,7 +225,8 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
             }
 
             while let Some(event) = window.conn.poll_for_event()? {
-                if let Event::Error(_) = event {
+                if let Event::Error(err) = event {
+                    eprintln!("Warning: X11 error {err:?}");
                     continue;
                 }
 
