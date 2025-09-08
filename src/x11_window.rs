@@ -62,14 +62,12 @@ impl X11Window {
             .win_gravity(Gravity::NORTH_WEST)
             .override_redirect(1);
 
-        let (x, y) = calculate_window_pos(&conn, &screen, &atoms, width, height)?;
-
         conn.create_window(
             screen.root_depth,
             win_id,
             screen.root,
-            x,
-            y,
+            0,
+            0,
             width,
             height,
             0,
@@ -136,13 +134,24 @@ impl X11Window {
         })
     }
 
-    pub fn map_window(&self) -> Result<()> {
+    pub fn show_window(&self) -> Result<()> {
+        let (x, y) = calculate_window_pos(
+            &self.conn,
+            &self.screen,
+            &self.atoms,
+            self.width,
+            self.height,
+        )?;
+        self.conn.configure_window(
+            self.win_id,
+            &ConfigureWindowAux::new().x(x as i32).y(y as i32),
+        )?;
         self.conn.map_window(self.win_id)?;
         self.conn.flush()?;
         Ok(())
     }
 
-    pub fn unmap_window(&self) -> Result<()> {
+    pub fn hide_window(&self) -> Result<()> {
         self.conn.unmap_window(self.win_id)?;
         self.conn.flush()?;
         Ok(())
