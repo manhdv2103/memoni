@@ -173,115 +173,118 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
     poll.registry()
         .register(&mut listener, MEMONI_TOKEN, mio::Interest::READABLE)?;
 
-    let mut window_shown = false;
-    'main_loop: loop {
-        // non-blocking when window is visible, blocking otherwise
-        let poll_timeout = if window_shown {
-            Some(Duration::ZERO)
-        } else {
-            None
-        };
-        poll.poll(&mut poll_events, poll_timeout).or_else(|e| {
-            if e.kind() == ErrorKind::Interrupted {
-                // We get interrupt when a signal happens inside poll. That's non-fatal, just
-                // retry.
-                poll_events.clear();
-                Ok(())
+    let main_loop_result = (|| -> Result<()> {
+        let mut window_shown = false;
+        'main_loop: loop {
+            // non-blocking when window is visible, blocking otherwise
+            let poll_timeout = if window_shown {
+                Some(Duration::ZERO)
             } else {
-                Err(e)
-            }
-        })?;
-        for event in &poll_events {
-            match event.token() {
-                X11_TOKEN => {} // handled below
-                SIGNAL_TOKEN => break 'main_loop,
-                MEMONI_TOKEN => {
-                    let (mut stream, _) = listener.accept()?;
-                    let mut buf = [0u8; 1024];
-                    match stream.read(&mut buf) {
-                        Ok(0) => {
-                            // client closed immediately
-                        }
-                        Ok(n) => {
-                            let command = String::from_utf8_lossy(&buf[..n]);
-                            match command.as_ref() {
-                                "show_win" => {
-                                    window.show_window()?;
-                                    window.grab_input()?;
-                                    window.enable_events()?;
-                                    window_shown = true;
-                                }
-                                _ => {
-                                    eprintln!("Warning: unknown client command: {command}");
+                None
+            };
+            poll.poll(&mut poll_events, poll_timeout).or_else(|e| {
+                if e.kind() == ErrorKind::Interrupted {
+                    // We get interrupt when a signal happens inside poll. That's non-fatal, just
+                    // retry.
+                    poll_events.clear();
+                    Ok(())
+                } else {
+                    Err(e)
+                }
+            })?;
+            for event in &poll_events {
+                match event.token() {
+                    X11_TOKEN => {} // handled below
+                    SIGNAL_TOKEN => break 'main_loop,
+                    MEMONI_TOKEN => {
+                        let (mut stream, _) = listener.accept()?;
+                        let mut buf = [0u8; 1024];
+                        match stream.read(&mut buf) {
+                            Ok(0) => {
+                                // client closed immediately
+                            }
+                            Ok(n) => {
+                                let command = String::from_utf8_lossy(&buf[..n]);
+                                match command.as_ref() {
+                                    "show_win" => {
+                                        window.show_window()?;
+                                        window.grab_input()?;
+                                        window.enable_events()?;
+                                        window_shown = true;
+                                    }
+                                    _ => {
+                                        eprintln!("Warning: unknown client command: {command}");
+                                    }
                                 }
                             }
+                            Err(e) => eprintln!("Warning: failed to read client command: {e}"),
                         }
-                        Err(e) => eprintln!("Warning: failed to read client command: {e}"),
                     }
+                    _ => unreachable!(),
                 }
-                _ => unreachable!(),
-            }
-        }
-
-        while let Some(event) = window.conn.poll_for_event()? {
-            if let Event::Error(_) = event {
-                continue;
             }
 
-            if let Event::DestroyNotify(_) = event {
-                break 'main_loop;
+            while let Some(event) = window.conn.poll_for_event()? {
+                if let Event::Error(_) = event {
+                    continue;
+                }
+
+                if let Event::DestroyNotify(_) = event {
+                    break 'main_loop;
+                }
+
+                input.handle_event(&event);
+                selection.handle_event(&event)?;
             }
 
-            input.handle_event(&event);
-            selection.handle_event(&event)?;
-        }
-
-        let mut selection_items = vec![];
-        for item in &selection.items {
-            if let Some((_, value)) = item.data.iter().find(|(k, _)| is_plaintext_mime(k)) {
-                selection_items.push(str::from_utf8(value)?);
+            let mut selection_items = vec![];
+            for item in &selection.items {
+                if let Some((_, value)) = item.data.iter().find(|(k, _)| is_plaintext_mime(k)) {
+                    selection_items.push(str::from_utf8(value)?);
+                }
             }
-        }
 
-        if window_shown {
-            let mut will_quit = false;
-            let mut will_hide_window = false;
-            let full_output = egui_ctx.run(input.egui_input.take(), |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| {
-                    ui.heading("Hello World!");
-                    if ui.button("Quit").clicked() {
-                        will_quit = true;
-                    }
-
-                    if ui.button("Hide").clicked() {
-                        will_hide_window = true;
-                    }
-
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        for (i, item) in selection_items.iter().enumerate() {
-                            ui.label(format!("{}: {}", i, item));
+            if window_shown {
+                let mut will_quit = false;
+                let mut will_hide_window = false;
+                let full_output = egui_ctx.run(input.egui_input.take(), |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        ui.heading("Hello World!");
+                        if ui.button("Quit").clicked() {
+                            will_quit = true;
                         }
+
+                        if ui.button("Hide").clicked() {
+                            will_hide_window = true;
+                        }
+
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            for (i, item) in selection_items.iter().enumerate() {
+                                ui.label(format!("{}: {}", i, item));
+                            }
+                        });
                     });
                 });
-            });
 
-            if will_quit {
-                break;
+                if will_quit {
+                    break;
+                }
+
+                if will_hide_window {
+                    window.hide_window()?;
+                    window.ungrab_input()?;
+                    window.disable_events()?;
+                    window_shown = false;
+                }
+
+                gl_context.render(&egui_ctx, full_output)?;
             }
-
-            if will_hide_window {
-                window.hide_window()?;
-                window.ungrab_input()?;
-                window.disable_events()?;
-                window_shown = false;
-            }
-
-            gl_context.render(&egui_ctx, full_output)?;
         }
-    }
+        Ok(())
+    })();
 
     window.ungrab_input()?;
     fs::remove_file(&socket_path)?;
 
-    Ok(())
+    main_loop_result
 }
