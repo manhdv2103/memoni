@@ -175,6 +175,7 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
 
     let main_loop_result = (|| -> Result<()> {
         let mut window_shown = false;
+        let mut mouse_seen = 0;
         'main_loop: loop {
             let mut will_show_window = false;
             let mut will_hide_window = false;
@@ -231,6 +232,20 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
                 if let Event::DestroyNotify(_) = event {
                     will_hide_window = true;
                     continue;
+                }
+
+                if let Event::ButtonPress(_) = event {
+                    mouse_seen += 1;
+                }
+
+                if let Event::ButtonRelease(ev) = event {
+                    if mouse_seen == 0 {
+                        if ev.event != window.win_id {
+                            will_hide_window = true;
+                        }
+                    } else {
+                        mouse_seen -= 1;
+                    }
                 }
 
                 input.handle_event(&event);
