@@ -85,7 +85,7 @@ USAGE:
   memoni server [OPTIONS]
 
 OPTIONS:
-  -s, --selection TYPE    Sets selection type [possible values: PRIMARY, CLIPBOARD] [default: PRIMARY]
+  -s, --selection TYPE    Sets selection type [possible values: CLIPBOARD, PRIMARY] [default: CLIPBOARD]
   -h, --help              Prints help information"
                     );
                 } else {
@@ -98,7 +98,7 @@ USAGE:
   memoni [OPTIONS]
 
 OPTIONS:
-  -s, --selection TYPE    Sets selection type [possible values: PRIMARY, CLIPBOARD] [default: PRIMARY]
+  -s, --selection TYPE    Sets selection type [possible values: CLIPBOARD, PRIMARY] [default: CLIPBOARD]
   -h, --help              Prints help information"
                     );
                 }
