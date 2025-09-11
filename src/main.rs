@@ -1,15 +1,16 @@
 use anyhow::{Result, bail};
+use memoni::input::Input;
 use memoni::selection::Selection;
+use memoni::ui::Ui;
 use memoni::x11_window::X11Window;
-use memoni::{input::Input, utils::is_plaintext_mime};
 use memoni::{opengl_context::OpenGLContext, selection::SelectionType};
 use mio::{net::UnixListener, unix::SourceFd};
 use signal_hook::consts::TERM_SIGNALS;
 use signal_hook_mio::v1_0::Signals;
 use std::{
     ffi::OsStr,
-    fs,
-    io::{ErrorKind, Read, Write},
+    fs, io,
+    io::{Read, Write},
     os::{
         fd::{AsFd as _, AsRawFd as _},
         unix::net::UnixStream,
@@ -19,6 +20,7 @@ use std::{
 };
 use x11rb::connection::Connection;
 use x11rb::protocol::Event;
+use x11rb::xcb_ffi::XCBConnection;
 
 const SOCKET_DIR: &str = "/tmp/memoni/";
 const X11_TOKEN: mio::Token = mio::Token(0);
@@ -137,6 +139,7 @@ fn client(args: ClientArgs, socket_dir: &Path) -> Result<()> {
 }
 
 fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
+    let socket_path = socket_dir.join(format!("{}.sock", args.selection));
     let width = 420u16;
     let height = 550u16;
     let background_color = 0x191919;
@@ -145,33 +148,26 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
     let mut gl_context = unsafe { OpenGLContext::new(&window)? };
     let mut input = Input::new(&window)?;
     let mut selection = Selection::new(&window, args.selection.clone())?;
-    let egui_ctx = egui::Context::default();
-
-    let mut poll = mio::Poll::new()?;
-    let mut poll_events = mio::Events::with_capacity(8);
-
-    let conn_fd = window.conn.as_fd().as_raw_fd();
-    poll.registry()
-        .register(&mut SourceFd(&conn_fd), X11_TOKEN, mio::Interest::READABLE)?;
+    let ui = Ui::new()?;
 
     let mut signals = Signals::new(TERM_SIGNALS)?;
-    poll.registry()
-        .register(&mut signals, SIGNAL_TOKEN, mio::Interest::READABLE)?;
-
-    let socket_path = socket_dir.join(format!("{}.sock", args.selection));
-    let mut listener = match UnixListener::bind(&socket_path) {
-        Ok(listener) => listener,
-        Err(ref e) if e.kind() == std::io::ErrorKind::AddrInUse => {
-            eprintln!(
-                "Error: another server for selection '{}' is already running",
-                args.selection
-            );
-            std::process::exit(1);
+    let (mut poll, socket_listener) = match create_poll(&window.conn, &socket_path, &mut signals) {
+        Ok(res) => res,
+        Err(err) => {
+            if let Some(io_err) = err.downcast_ref::<io::Error>()
+                && io_err.kind() == io::ErrorKind::AddrInUse
+            {
+                eprintln!(
+                    "Error: another server for selection '{}' is already running",
+                    args.selection
+                );
+                std::process::exit(1);
+            } else {
+                return Err(err);
+            }
         }
-        Err(e) => return Err(e.into()),
     };
-    poll.registry()
-        .register(&mut listener, MEMONI_TOKEN, mio::Interest::READABLE)?;
+    let mut poll_events = mio::Events::with_capacity(8);
 
     let main_loop_result = (|| -> Result<()> {
         let mut window_shown = false;
@@ -187,7 +183,7 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
                 None
             };
             poll.poll(&mut poll_events, poll_timeout).or_else(|e| {
-                if e.kind() == ErrorKind::Interrupted {
+                if e.kind() == io::ErrorKind::Interrupted {
                     // We get interrupt when a signal happens inside poll. That's non-fatal, just
                     // retry.
                     poll_events.clear();
@@ -201,7 +197,7 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
                     X11_TOKEN => {} // handled below
                     SIGNAL_TOKEN => break 'main_loop,
                     MEMONI_TOKEN => {
-                        let (mut stream, _) = listener.accept()?;
+                        let (mut stream, _) = socket_listener.accept()?;
                         let mut buf = [0u8; 1024];
                         match stream.read(&mut buf) {
                             Ok(0) => {
@@ -260,30 +256,9 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
                 }
             }
 
-            let mut selection_items = vec![];
-            for item in &selection.items {
-                if let Some((_, value)) = item.data.iter().find(|(k, _)| is_plaintext_mime(k)) {
-                    selection_items.push(str::from_utf8(value)?);
-                }
-            }
-
             if window_shown {
-                let full_output = egui_ctx.run(input.egui_input.take(), |ctx| {
-                    egui::CentralPanel::default().show(ctx, |ui| {
-                        ui.heading("Hello World!");
-                        if ui.button("Hide").clicked() {
-                            will_hide_window = true;
-                        }
-
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            for (i, item) in selection_items.iter().enumerate() {
-                                ui.label(format!("{}: {}", i, item));
-                            }
-                        });
-                    });
-                });
-
-                gl_context.render(&egui_ctx, full_output)?;
+                let full_output = ui.run(input.egui_input.take(), &selection.items)?;
+                gl_context.render(&ui.egui_ctx, full_output)?;
             }
 
             if will_show_window {
@@ -307,4 +282,25 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
     fs::remove_file(&socket_path)?;
 
     main_loop_result
+}
+
+fn create_poll<P: AsRef<Path>>(
+    conn: &XCBConnection,
+    socket_path: P,
+    signals: &mut Signals,
+) -> Result<(mio::Poll, UnixListener)> {
+    let poll = mio::Poll::new()?;
+
+    let conn_fd = conn.as_fd().as_raw_fd();
+    poll.registry()
+        .register(&mut SourceFd(&conn_fd), X11_TOKEN, mio::Interest::READABLE)?;
+
+    poll.registry()
+        .register(signals, SIGNAL_TOKEN, mio::Interest::READABLE)?;
+
+    let mut listener = UnixListener::bind(socket_path)?;
+    poll.registry()
+        .register(&mut listener, MEMONI_TOKEN, mio::Interest::READABLE)?;
+
+    Ok((poll, listener))
 }

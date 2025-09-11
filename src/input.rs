@@ -3,7 +3,7 @@ use crate::{
     x11_window::X11Window,
 };
 use anyhow::Result;
-use egui::{Event, PointerButton, Pos2, RawInput};
+use egui::{Event, MouseWheelUnit, PointerButton, Pos2, RawInput, Rect, Vec2};
 use x11rb::{
     connection::Connection as _,
     protocol::{
@@ -32,6 +32,10 @@ impl Input {
 
         let egui_input = RawInput {
             focused: true,
+            screen_rect: Some(Rect::from_min_size(
+                Pos2::new(0.0, 0.0),
+                Vec2::new(window.width as f32, window.height as f32),
+            )),
             ..Default::default()
         };
 
@@ -47,7 +51,7 @@ impl Input {
         let modifiers = &mut self.egui_input.modifiers;
 
         let egui_event = match event {
-            X11Event::ButtonPress(ev) | X11Event::ButtonRelease(ev) => {
+            X11Event::ButtonPress(ev) | X11Event::ButtonRelease(ev) if ev.detail <= 3 => {
                 let pressed = matches!(event, X11Event::ButtonPress(_));
                 let pointer_button = match ev.detail {
                     1 => Some(PointerButton::Primary),
@@ -60,6 +64,21 @@ impl Input {
                     pos: Pos2::new(ev.event_x as f32, ev.event_y as f32),
                     button,
                     pressed,
+                    modifiers: *modifiers,
+                })
+            }
+            X11Event::ButtonPress(ev) | X11Event::ButtonRelease(ev) => {
+                let delta = match ev.detail {
+                    4 => Some(egui::vec2(0.0, 1.0)),
+                    5 => Some(egui::vec2(0.0, -1.0)),
+                    6 => Some(egui::vec2(1.0, 0.0)),
+                    7 => Some(egui::vec2(-1.0, 0.0)),
+                    _ => None,
+                };
+
+                delta.map(|d| Event::MouseWheel {
+                    unit: MouseWheelUnit::Line,
+                    delta: d,
                     modifiers: *modifiers,
                 })
             }
