@@ -2,6 +2,7 @@ extern crate x11rb;
 
 use std::cell::Cell;
 use std::os::unix::ffi::OsStringExt as _;
+use std::{thread, time};
 use std::{cmp, ffi::OsString};
 
 use anyhow::Result;
@@ -163,14 +164,26 @@ impl X11Window {
     }
 
     pub fn grab_input(&self) -> Result<()> {
-        let grab_keyboard = self.conn.grab_keyboard(
-            true,
-            self.screen.root,
-            x11rb::CURRENT_TIME,
-            GrabMode::ASYNC,
-            GrabMode::ASYNC,
-        )?;
-        grab_keyboard.reply()?;
+        let mut grab_keyboard_success = false;
+        // Have to repeatedly retry because if memoni is triggered from a window manager (e.g. i3)
+        // keymap, the WM is probably still grabbing the keyboard and not ungrabbing immediately
+        for _ in 0..100 {
+            let grab_keyboard = self.conn.grab_keyboard(
+                true,
+                self.screen.root,
+                x11rb::CURRENT_TIME,
+                GrabMode::ASYNC,
+                GrabMode::ASYNC,
+            )?;
+            if grab_keyboard.reply()?.status == GrabStatus::SUCCESS {
+                grab_keyboard_success = true;
+                break;
+            }
+            thread::sleep(time::Duration::from_millis(10));
+        }
+        if !grab_keyboard_success {
+            eprintln!("Warning: failed to grab keyboard");
+        }
 
         let grab_pointer = self.conn.grab_pointer(
             true,
