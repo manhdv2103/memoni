@@ -298,7 +298,15 @@ fn create_poll<P: AsRef<Path>>(
     poll.registry()
         .register(signals, SIGNAL_TOKEN, mio::Interest::READABLE)?;
 
-    let mut listener = UnixListener::bind(socket_path)?;
+    // socket file exists but isn't in use
+    if fs::exists(&socket_path)?
+        && let Err(err) = UnixStream::connect(&socket_path)
+        && err.kind() == io::ErrorKind::ConnectionRefused
+    {
+        fs::remove_file(&socket_path)?;
+    }
+
+    let mut listener = UnixListener::bind(&socket_path)?;
     poll.registry()
         .register(&mut listener, MEMONI_TOKEN, mio::Interest::READABLE)?;
 
