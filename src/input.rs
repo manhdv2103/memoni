@@ -94,12 +94,15 @@ impl<'a> Input<'a> {
                     &self.mapping.keysyms,
                 ) {
                     if keysym.is_modifier_key() {
-                        modifiers.alt =
-                            pressed && (keysym == Keysym::Alt_L || keysym == Keysym::Alt_R);
-                        modifiers.ctrl =
-                            pressed && (keysym == Keysym::Control_L || keysym == Keysym::Control_R);
-                        modifiers.shift =
-                            pressed && (keysym == Keysym::Shift_L || keysym == Keysym::Shift_R);
+                        if keysym == Keysym::Alt_L || keysym == Keysym::Alt_R {
+                            modifiers.alt = pressed;
+                        }
+                        if keysym == Keysym::Control_L || keysym == Keysym::Control_R {
+                            modifiers.ctrl = pressed;
+                        }
+                        if keysym == Keysym::Shift_L || keysym == Keysym::Shift_R {
+                            modifiers.shift = pressed;
+                        }
                         break 'blk None;
                     }
 
