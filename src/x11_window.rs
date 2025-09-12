@@ -1,5 +1,6 @@
 extern crate x11rb;
 
+use std::cell::Cell;
 use std::os::unix::ffi::OsStringExt as _;
 use std::{cmp, ffi::OsString};
 
@@ -40,6 +41,7 @@ pub struct X11Window {
     pub height: u16,
     pub background_color: u32,
     win_event_mask: EventMask,
+    win_pos: Cell<(i16, i16)>,
 }
 
 impl X11Window {
@@ -131,6 +133,7 @@ impl X11Window {
             height,
             background_color,
             win_event_mask,
+            win_pos: Cell::new((0, 0)),
         })
     }
 
@@ -146,6 +149,8 @@ impl X11Window {
             self.win_id,
             &ConfigureWindowAux::new().x(x as i32).y(y as i32),
         )?;
+        self.win_pos.set((x, y));
+
         self.conn.map_window(self.win_id)?;
         self.conn.flush()?;
         Ok(())
@@ -170,7 +175,7 @@ impl X11Window {
         let grab_pointer = self.conn.grab_pointer(
             true,
             self.screen.root,
-            EventMask::BUTTON_RELEASE,
+            EventMask::BUTTON_RELEASE | EventMask::BUTTON_MOTION | EventMask::POINTER_MOTION,
             GrabMode::ASYNC,
             GrabMode::ASYNC,
             self.screen.root,
@@ -208,6 +213,10 @@ impl X11Window {
         )?;
 
         Ok(())
+    }
+
+    pub fn get_current_win_pos(&self) -> (i16, i16) {
+        self.win_pos.get()
     }
 }
 

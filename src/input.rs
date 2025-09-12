@@ -13,15 +13,15 @@ use x11rb::{
 };
 use xkeysym::{KeyCode, Keysym, keysym};
 
-pub struct Input {
+pub struct Input<'a> {
     pub egui_input: RawInput,
+    window: &'a X11Window,
     min_keycode: u8,
-    max_keycode: u8,
     mapping: GetKeyboardMappingReply,
 }
 
-impl Input {
-    pub fn new(window: &X11Window) -> Result<Self> {
+impl<'a> Input<'a> {
+    pub fn new(window: &'a X11Window) -> Result<Self> {
         let window_setup = window.conn.setup();
         let min_keycode = window_setup.min_keycode;
         let max_keycode = window_setup.max_keycode;
@@ -41,8 +41,8 @@ impl Input {
 
         Ok(Input {
             egui_input,
+            window,
             min_keycode,
-            max_keycode,
             mapping: mapping_reply,
         })
     }
@@ -125,10 +125,13 @@ impl Input {
 
                 None
             }
-            X11Event::MotionNotify(ev) => Some(Event::PointerMoved(Pos2::new(
-                ev.event_x as f32,
-                ev.event_y as f32,
-            ))),
+            X11Event::MotionNotify(ev) => {
+                let (x, y) = self.window.get_current_win_pos();
+                Some(Event::PointerMoved(Pos2::new(
+                    (ev.root_x - x) as f32,
+                    (ev.root_y - y) as f32,
+                )))
+            }
             _ => None,
         };
 
