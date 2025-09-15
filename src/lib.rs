@@ -1,4 +1,5 @@
 pub mod atom_pool;
+pub mod config;
 pub mod input;
 pub mod opengl_context;
 pub mod selection;

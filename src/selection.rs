@@ -18,7 +18,7 @@ use x11rb::xcb_ffi::XCBConnection;
 use x11rb::{connection::Connection, protocol::xfixes};
 use x11rb::{connection::RequestConnection as _, protocol::xtest::ConnectionExt as _};
 
-use crate::{atom_pool::AtomPool, utils::is_plaintext_mime, x11_window::X11Window};
+use crate::{atom_pool::AtomPool, config::Config, utils::is_plaintext_mime, x11_window::X11Window};
 
 // Heavily modified from https://github.com/SUPERCILEX/clipboard-history/blob/master/x11/src/main.rs
 
@@ -88,6 +88,7 @@ pub struct Selection<'a> {
 
     conn: &'a XCBConnection,
     screen: &'a Screen,
+    config: &'a Config,
     selection_atom: Atom,
     atoms: Atoms,
     tasks: HashMap<Atom, Task>,
@@ -99,7 +100,11 @@ pub struct Selection<'a> {
 }
 
 impl<'a> Selection<'a> {
-    pub fn new(window: &'a X11Window, selection_type: SelectionType) -> Result<Self> {
+    pub fn new(
+        window: &'a X11Window,
+        selection_type: SelectionType,
+        config: &'a Config,
+    ) -> Result<Self> {
         let conn = &window.conn;
         let root = window.screen.root;
 
@@ -155,6 +160,7 @@ impl<'a> Selection<'a> {
             items: VecDeque::new(),
             conn,
             screen: &window.screen,
+            config,
             selection_atom,
             atoms,
             tasks: HashMap::new(),
@@ -457,11 +463,29 @@ impl<'a> Selection<'a> {
         };
 
         if self.selection_atom == self.atoms.CLIPBOARD {
+            let is_terminal = if let Some((instance_name, class_name)) =
+                get_window_class(self.conn, focused_window)?
+            {
+                self.config.terminals.contains(&instance_name)
+                    || self.config.terminals.contains(&class_name)
+            } else {
+                false
+            };
+
+            if is_terminal {
+                // Shift
+                key(KEY_PRESS_EVENT, 50)?;
+            }
+
             // Ctrl + V
             key(KEY_PRESS_EVENT, 37)?;
             key(KEY_PRESS_EVENT, 55)?;
             key(KEY_RELEASE_EVENT, 55)?;
             key(KEY_RELEASE_EVENT, 37)?;
+
+            if is_terminal {
+                key(KEY_RELEASE_EVENT, 50)?;
+            }
         } else if self.selection_atom == self.atoms.PRIMARY {
             let cursor_current_pos = self.conn.query_pointer(self.screen.root)?.reply()?;
 
@@ -523,6 +547,31 @@ fn filter_mimes(mimes: HashMap<Atom, String>) -> HashMap<Atom, String> {
     }
 
     filtered_mimes
+}
+
+fn get_window_class(conn: &XCBConnection, window: u32) -> Result<Option<(String, String)>> {
+    let reply: GetPropertyReply = conn
+        .get_property(
+            false,
+            window,
+            AtomEnum::WM_CLASS,
+            AtomEnum::STRING,
+            0,
+            u32::MAX,
+        )?
+        .reply()?;
+
+    if reply.value_len == 0 {
+        return Ok(None);
+    }
+
+    let value = String::from_utf8_lossy(&reply.value).into_owned();
+    let mut parts = value.split('\0');
+
+    let instance_name = parts.next().unwrap_or("").to_string();
+    let class_name = parts.next().unwrap_or("").to_string();
+
+    Ok(Some((instance_name, class_name)))
 }
 
 fn hash_selection_data(data: &HashMap<String, Vec<u8>>) -> Result<u64> {

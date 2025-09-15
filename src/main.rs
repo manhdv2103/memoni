@@ -1,4 +1,5 @@
 use anyhow::{bail, Result};
+use memoni::config::Config;
 use memoni::input::Input;
 use memoni::selection::Selection;
 use memoni::ui::Ui;
@@ -144,10 +145,11 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
     let height = 550u16;
     let background_color = 0x191919;
 
+    let config = Config::load()?;
     let window = X11Window::new(width, height, background_color)?;
     let mut gl_context = unsafe { OpenGLContext::new(&window)? };
     let mut input = Input::new(&window)?;
-    let mut selection = Selection::new(&window, args.selection.clone())?;
+    let mut selection = Selection::new(&window, args.selection.clone(), &config)?;
     let ui = Ui::new()?;
 
     let mut signals = Signals::new(TERM_SIGNALS)?;
