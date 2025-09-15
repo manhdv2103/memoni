@@ -42,12 +42,18 @@ pub struct X11Window {
     pub height: u16,
     pub background_color: u32,
     pub win_opened_cursor_pos: Cell<(i16, i16)>,
+    pub always_follows_mouse: bool,
     win_event_mask: EventMask,
     win_pos: Cell<(i16, i16)>,
 }
 
 impl X11Window {
-    pub fn new(width: u16, height: u16, background_color: u32) -> Result<Self> {
+    pub fn new(
+        width: u16,
+        height: u16,
+        background_color: u32,
+        always_follows_mouse: bool,
+    ) -> Result<Self> {
         let (conn, screen_num) = XCBConnection::connect(None)?;
         let setup = conn.setup();
         let screen = setup.roots[screen_num].to_owned();
@@ -135,6 +141,7 @@ impl X11Window {
             height,
             background_color,
             win_event_mask,
+            always_follows_mouse,
             win_pos: Cell::new((0, 0)),
             win_opened_cursor_pos: Cell::new((0, 0)),
         })
@@ -152,6 +159,7 @@ impl X11Window {
             self.win_opened_cursor_pos.get(),
             self.width,
             self.height,
+            self.always_follows_mouse,
         )?;
         self.conn.configure_window(
             self.win_id,
@@ -251,6 +259,7 @@ fn calculate_window_pos(
     cursor_pos: (i16, i16),
     width: u16,
     height: u16,
+    always_follows_mouse: bool,
 ) -> Result<(i16, i16)> {
     let spacing = 10;
     let px = cursor_pos.0 as i32;
@@ -278,7 +287,7 @@ fn calculate_window_pos(
     });
 
     // pointer is in non-focused monitor, display the window in the middle of the focused monitor
-    if let Some(fm) = focused_monitor
+    if !always_follows_mouse && let Some(fm) = focused_monitor
         && pointer_monitor
             .as_ref()
             .map(|pm| fm.name != pm.name)

@@ -44,7 +44,7 @@ pub struct SelectionItem {
     pub data: HashMap<String, Vec<u8>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum SelectionType {
     PRIMARY,
     CLIPBOARD,
