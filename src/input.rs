@@ -15,7 +15,7 @@ use xkeysym::{KeyCode, Keysym, keysym};
 
 pub struct Input<'a> {
     pub egui_input: RawInput,
-    window: &'a X11Window,
+    window: &'a X11Window<'a>,
     min_keycode: u8,
     mapping: GetKeyboardMappingReply,
 }
@@ -34,7 +34,10 @@ impl<'a> Input<'a> {
             focused: true,
             screen_rect: Some(Rect::from_min_size(
                 Pos2::new(0.0, 0.0),
-                Vec2::new(window.width as f32, window.height as f32),
+                Vec2::new(
+                    window.config.style.window_width as f32,
+                    window.config.style.window_height as f32,
+                ),
             )),
             ..Default::default()
         };

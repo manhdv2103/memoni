@@ -12,6 +12,8 @@ use x11rb::protocol::xproto::{ConnectionExt as _, *};
 use x11rb::wrapper::ConnectionExt as _;
 use x11rb::xcb_ffi::XCBConnection;
 
+use crate::config::{Config, StylingConfig};
+
 x11rb::atom_manager! {
     pub Atoms: AtomsCookie {
         WM_PROTOCOLS,
@@ -32,28 +34,21 @@ struct Viewport {
     y: u32,
 }
 
-pub struct X11Window {
+pub struct X11Window<'a> {
     pub conn: XCBConnection,
     pub screen: Screen,
     pub screen_num: usize,
     pub atoms: Atoms,
     pub win_id: u32,
-    pub width: u16,
-    pub height: u16,
-    pub background_color: u32,
+    pub config: &'a Config,
     pub win_opened_cursor_pos: Cell<(i16, i16)>,
     pub always_follows_mouse: bool,
     win_event_mask: EventMask,
     win_pos: Cell<(i16, i16)>,
 }
 
-impl X11Window {
-    pub fn new(
-        width: u16,
-        height: u16,
-        background_color: u32,
-        always_follows_mouse: bool,
-    ) -> Result<Self> {
+impl<'a> X11Window<'a> {
+    pub fn new(config: &'a Config, always_follows_mouse: bool) -> Result<Self> {
         let (conn, screen_num) = XCBConnection::connect(None)?;
         let setup = conn.setup();
         let screen = setup.roots[screen_num].to_owned();
@@ -68,7 +63,7 @@ impl X11Window {
             | EventMask::POINTER_MOTION;
         let win_aux = CreateWindowAux::new()
             .event_mask(win_event_mask)
-            .background_pixel(background_color)
+            .background_pixel(config.style.background_color)
             .win_gravity(Gravity::NORTH_WEST)
             .override_redirect(1);
 
@@ -78,8 +73,8 @@ impl X11Window {
             screen.root,
             0,
             0,
-            width,
-            height,
+            config.style.window_width,
+            config.style.window_height,
             0,
             WindowClass::INPUT_OUTPUT,
             0,
@@ -137,9 +132,7 @@ impl X11Window {
             screen_num,
             atoms,
             win_id,
-            width,
-            height,
-            background_color,
+            config,
             win_event_mask,
             always_follows_mouse,
             win_pos: Cell::new((0, 0)),
@@ -152,15 +145,7 @@ impl X11Window {
         self.win_opened_cursor_pos
             .set((pointer.root_x, pointer.root_y));
 
-        let (x, y) = calculate_window_pos(
-            &self.conn,
-            &self.screen,
-            &self.atoms,
-            self.win_opened_cursor_pos.get(),
-            self.width,
-            self.height,
-            self.always_follows_mouse,
-        )?;
+        let (x, y) = self.calculate_window_pos()?;
         self.conn.configure_window(
             self.win_id,
             &ConfigureWindowAux::new().x(x as i32).y(y as i32),
@@ -250,80 +235,89 @@ impl X11Window {
     pub fn get_win_opened_cursor_pos(&self) -> (i16, i16) {
         self.win_opened_cursor_pos.get()
     }
-}
 
-fn calculate_window_pos(
-    conn: &XCBConnection,
-    screen: &Screen,
-    atoms: &Atoms,
-    cursor_pos: (i16, i16),
-    width: u16,
-    height: u16,
-    always_follows_mouse: bool,
-) -> Result<(i16, i16)> {
-    let spacing = 10;
-    let px = cursor_pos.0 as i32;
-    let py = cursor_pos.1 as i32;
+    fn calculate_window_pos(&self) -> Result<(i16, i16)> {
+        let X11Window {
+            conn,
+            screen,
+            atoms,
+            win_opened_cursor_pos,
+            always_follows_mouse,
+            config,
+            ..
+        } = self;
+        let StylingConfig {
+            window_width: width,
+            window_height: height,
+            cursor_gap: spacing,
+            ..
+        } = config.style;
+        let cursor_pos = win_opened_cursor_pos.get();
 
-    let width = width as i32;
-    let height = height as i32;
+        let px = cursor_pos.0 as i32;
+        let py = cursor_pos.1 as i32;
 
-    let monitors = conn.randr_get_monitors(screen.root, true)?.reply()?;
-    let pointer_monitor = monitors.monitors.iter().find(|m| {
-        px >= m.x as i32
-            && px < m.x as i32 + m.width as i32
-            && py >= m.y as i32
-            && py < m.y as i32 + m.height as i32
-    });
+        let width = width as i32;
+        let height = height as i32;
 
-    let desktop_viewport = get_current_desktop_viewport(conn, screen, atoms)?;
-    let focused_monitor = desktop_viewport.and_then(|dv| {
-        monitors.monitors.iter().find(|m| {
-            (dv.x as i64) >= m.x as i64
-                && (dv.x as i64) < m.x as i64 + m.width as i64
-                && (dv.y as i64) >= m.y as i64
-                && (dv.y as i64) < m.y as i64 + m.height as i64
-        })
-    });
+        let monitors = conn.randr_get_monitors(screen.root, true)?.reply()?;
+        let pointer_monitor = monitors.monitors.iter().find(|m| {
+            px >= m.x as i32
+                && px < m.x as i32 + m.width as i32
+                && py >= m.y as i32
+                && py < m.y as i32 + m.height as i32
+        });
 
-    // pointer is in non-focused monitor, display the window in the middle of the focused monitor
-    if !always_follows_mouse && let Some(fm) = focused_monitor
-        && pointer_monitor
-            .as_ref()
-            .map(|pm| fm.name != pm.name)
-            .unwrap_or(true)
-    {
-        let x = (fm.width as i32 - width) / 2 + fm.x as i32;
-        let y = (fm.height as i32 - height) / 2 + fm.y as i32;
-        return Ok((
+        let desktop_viewport = get_current_desktop_viewport(conn, screen, atoms)?;
+        let focused_monitor = desktop_viewport.and_then(|dv| {
+            monitors.monitors.iter().find(|m| {
+                (dv.x as i64) >= m.x as i64
+                    && (dv.x as i64) < m.x as i64 + m.width as i64
+                    && (dv.y as i64) >= m.y as i64
+                    && (dv.y as i64) < m.y as i64 + m.height as i64
+            })
+        });
+
+        // pointer is in non-focused monitor, display the window in the middle of the focused monitor
+        if !always_follows_mouse
+            && let Some(fm) = focused_monitor
+            && pointer_monitor
+                .as_ref()
+                .map(|pm| fm.name != pm.name)
+                .unwrap_or(true)
+        {
+            let x = (fm.width as i32 - width) / 2 + fm.x as i32;
+            let y = (fm.height as i32 - height) / 2 + fm.y as i32;
+            return Ok((
+                x.clamp(i16::MIN as i32, i16::MAX as i32) as i16,
+                y.clamp(i16::MIN as i32, i16::MAX as i32) as i16,
+            ));
+        }
+
+        // place the window at the pointer position and try to keep it in the same monitor
+        let (mx, my, mw, mh) = pointer_monitor
+            .map(|pm| (pm.x as i32, pm.y as i32, pm.width as i32, pm.height as i32))
+            .unwrap_or((0, 0, 0, 0));
+
+        let place_right = px + width + spacing <= mx + mw - spacing;
+        let x = if place_right {
+            px + spacing
+        } else {
+            cmp::max(px - width - spacing, spacing)
+        };
+
+        let place_below = py + height + spacing <= my + mh - spacing;
+        let y = if place_below {
+            py + spacing
+        } else {
+            cmp::max(py - height - spacing, spacing)
+        };
+
+        Ok((
             x.clamp(i16::MIN as i32, i16::MAX as i32) as i16,
             y.clamp(i16::MIN as i32, i16::MAX as i32) as i16,
-        ));
+        ))
     }
-
-    // place the window at the pointer position and try to keep it in the same monitor
-    let (mx, my, mw, mh) = pointer_monitor
-        .map(|pm| (pm.x as i32, pm.y as i32, pm.width as i32, pm.height as i32))
-        .unwrap_or((0, 0, 0, 0));
-
-    let place_right = px + width + spacing <= mx + mw - spacing;
-    let x = if place_right {
-        px + spacing
-    } else {
-        cmp::max(px - width - spacing, spacing)
-    };
-
-    let place_below = py + height + spacing <= my + mh - spacing;
-    let y = if place_below {
-        py + spacing
-    } else {
-        cmp::max(py - height - spacing, spacing)
-    };
-
-    Ok((
-        x.clamp(i16::MIN as i32, i16::MAX as i32) as i16,
-        y.clamp(i16::MIN as i32, i16::MAX as i32) as i16,
-    ))
 }
 
 fn get_current_desktop_viewport(

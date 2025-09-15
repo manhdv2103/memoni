@@ -141,21 +141,13 @@ fn client(args: ClientArgs, socket_dir: &Path) -> Result<()> {
 
 fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
     let socket_path = socket_dir.join(format!("{}.sock", args.selection));
-    let width = 420u16;
-    let height = 550u16;
-    let background_color = 0x191919;
 
     let config = Config::load()?;
-    let window = X11Window::new(
-        width,
-        height,
-        background_color,
-        args.selection == SelectionType::PRIMARY,
-    )?;
+    let window = X11Window::new(&config, args.selection == SelectionType::PRIMARY)?;
     let mut gl_context = unsafe { OpenGLContext::new(&window)? };
     let mut input = Input::new(&window)?;
     let mut selection = Selection::new(&window, args.selection.clone(), &config)?;
-    let ui = Ui::new()?;
+    let ui = Ui::new(&config)?;
 
     let mut signals = Signals::new(TERM_SIGNALS)?;
     let (mut poll, socket_listener) = match create_poll(&window.conn, &socket_path, &mut signals) {
