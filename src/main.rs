@@ -1,4 +1,4 @@
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use memoni::input::Input;
 use memoni::selection::Selection;
 use memoni::ui::Ui;
@@ -175,6 +175,7 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
         'main_loop: loop {
             let mut will_show_window = false;
             let mut will_hide_window = false;
+            let mut paste_item_id = None;
 
             // non-blocking when window is visible, blocking otherwise
             let poll_timeout = if window_shown {
@@ -257,7 +258,11 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
             }
 
             if window_shown {
-                let full_output = ui.run(input.egui_input.take(), &selection.items)?;
+                let full_output =
+                    ui.run(input.egui_input.take(), &selection.items, |selected| {
+                        will_hide_window = true;
+                        paste_item_id = Some(selected.id);
+                    })?;
                 gl_context.render(&ui.egui_ctx, full_output)?;
             }
 
@@ -273,6 +278,10 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
                 window.ungrab_input()?;
                 window.disable_events()?;
                 window_shown = false;
+            }
+
+            if let Some(id) = paste_item_id {
+                selection.paste(id, window.win_opened_cursor_pos.get())?;
             }
         }
         Ok(())

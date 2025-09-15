@@ -17,5 +17,5 @@ raw-window-handle = "0.6.2"
 rustix = { version = "0.38.44", default-features = false, features = ["system"] }
 signal-hook = "0.3.18"
 signal-hook-mio = { version = "0.2.4", features = ["support-v1_0"] }
-x11rb = { version = "0.13.1", features = ["allow-unsafe-code", "randr", "xfixes"] }
+x11rb = { version = "0.13.1", features = ["allow-unsafe-code", "randr", "xfixes", "xtest"] }
 xkeysym = "0.2.1"

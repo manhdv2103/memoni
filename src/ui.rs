@@ -28,31 +28,48 @@ impl Ui {
         &self,
         egui_input: RawInput,
         selection_items: I,
+        mut on_paste: impl FnMut(&SelectionItem),
     ) -> Result<FullOutput> {
         let mut render_items = vec![];
         for item in selection_items {
             if let Some((_, value)) = item.data.iter().find(|(k, _)| is_plaintext_mime(k)) {
-                render_items.push(str::from_utf8(value)?);
+                render_items.push((str::from_utf8(value)?, item));
             }
         }
 
+        let mut run_result: Result<()> = Ok(());
         let full_output = self.egui_ctx.run(egui_input, |ctx| {
-            Self::container(ctx, |ui| {
+            run_result = Self::container(ctx, |ui| {
                 for item in &render_items {
-                    let _ = ui.add(
-                        egui::Button::new(*item)
-                            .truncate()
-                            .corner_radius(egui::CornerRadius::same(7))
-                            .min_size(egui::vec2(ui.available_width(), 0.0)),
-                    );
+                    if ui
+                        .add(
+                            egui::Button::new(item.0)
+                                .truncate()
+                                .corner_radius(egui::CornerRadius::same(7))
+                                .min_size(egui::vec2(ui.available_width(), 0.0)),
+                        )
+                        .clicked()
+                    {
+                        on_paste(item.1);
+                    }
                 }
+
+                Ok(())
             });
         });
 
-        Ok(full_output)
+        match run_result {
+            Ok(_) => Ok(full_output),
+            Err(err) => Err(err),
+        }
     }
 
-    fn container(ctx: &egui::Context, add_contents: impl FnOnce(&mut egui::Ui)) {
+    fn container(
+        ctx: &egui::Context,
+        add_contents: impl FnOnce(&mut egui::Ui) -> Result<()>,
+    ) -> Result<()> {
+        let mut err: Option<anyhow::Error> = None;
+
         egui::CentralPanel::default()
             .frame(egui::Frame::new())
             .show(ctx, |ui| {
@@ -66,8 +83,17 @@ impl Ui {
                     .show(ui, |ui| {
                         egui::Frame::new()
                             .inner_margin(egui::Margin::symmetric(8, 8))
-                            .show(ui, add_contents);
+                            .show(ui, |ui| {
+                                if let Err(e) = add_contents(ui) {
+                                    err = Some(e);
+                                }
+                            });
                     });
             });
+
+        match err {
+            None => Ok(()),
+            Some(e) => Err(e),
+        }
     }
 }

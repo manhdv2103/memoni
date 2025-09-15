@@ -1,13 +1,13 @@
 extern crate x11rb;
 
 use std::{
+    cell::Cell,
     collections::{HashMap, VecDeque},
     fmt,
     time::{Duration, Instant},
 };
 
 use anyhow::{Context as _, Result};
-use x11rb::connection::RequestConnection as _;
 use x11rb::protocol::{
     Event,
     xfixes::SelectionEventMask,
@@ -16,6 +16,7 @@ use x11rb::protocol::{
 use x11rb::wrapper::ConnectionExt as _;
 use x11rb::xcb_ffi::XCBConnection;
 use x11rb::{connection::Connection, protocol::xfixes};
+use x11rb::{connection::RequestConnection as _, protocol::xtest::ConnectionExt as _};
 
 use crate::{atom_pool::AtomPool, utils::is_plaintext_mime, x11_window::X11Window};
 
@@ -86,10 +87,15 @@ pub struct Selection<'a> {
     pub items: VecDeque<SelectionItem>,
 
     conn: &'a XCBConnection,
+    screen: &'a Screen,
+    selection_atom: Atom,
     atoms: Atoms,
     tasks: HashMap<Atom, Task>,
     transfer_window: u32,
+    paste_window: u32,
     transfer_atoms: AtomPool<'a>,
+    mime_atoms: Cell<HashMap<String, Atom>>,
+    paste_item_id: Option<u64>,
 }
 
 impl<'a> Selection<'a> {
@@ -103,6 +109,10 @@ impl<'a> Selection<'a> {
         xfixes::query_version(conn, 5, 0)?.reply()?;
 
         let atoms = Atoms::new(conn)?.reply()?;
+        let selection_atom = match selection_type {
+            SelectionType::PRIMARY => atoms.PRIMARY,
+            SelectionType::CLIPBOARD => atoms.CLIPBOARD,
+        };
 
         let create_util_window = |title: &[u8], aux, kind| -> Result<_> {
             let win_id = conn.generate_id()?;
@@ -130,27 +140,29 @@ impl<'a> Selection<'a> {
         };
         let transfer_window = create_util_window(
             b"Memoni transfer window",
-            CreateWindowAux::default(),
-            WindowClass::INPUT_OUTPUT,
+            CreateWindowAux::default().event_mask(EventMask::PROPERTY_CHANGE),
+            WindowClass::INPUT_ONLY,
         )?;
 
         xfixes::select_selection_input(
             conn,
             root,
-            match selection_type {
-                SelectionType::PRIMARY => atoms.PRIMARY,
-                SelectionType::CLIPBOARD => atoms.CLIPBOARD,
-            },
+            selection_atom,
             SelectionEventMask::SET_SELECTION_OWNER,
         )?;
 
         Ok(Selection {
             items: VecDeque::new(),
             conn,
+            screen: &window.screen,
+            selection_atom,
             atoms,
             tasks: HashMap::new(),
             transfer_window,
+            paste_window: window.win_id,
             transfer_atoms: AtomPool::new(conn, "SELECTION_DATA")?,
+            mime_atoms: Cell::new(HashMap::new()),
+            paste_item_id: None,
         })
     }
 
@@ -159,6 +171,7 @@ impl<'a> Selection<'a> {
         let atoms = self.atoms;
 
         match event {
+            // Captures copied data
             Event::SelectionNotify(ev) => {
                 if ev.requestor != self.transfer_window {
                     return Ok(());
@@ -251,7 +264,7 @@ impl<'a> Selection<'a> {
                         ref mut mimes,
                         ref mut data,
                     } => {
-                        let Some(mime) = mimes.remove(&ev.target) else {
+                        let Some(mime_name) = mimes.remove(&ev.target) else {
                             // Not a pending target
                             return Ok(());
                         };
@@ -266,7 +279,8 @@ impl<'a> Selection<'a> {
                         if !(property.value.is_empty()
                             || property.value.iter().all(u8::is_ascii_whitespace))
                         {
-                            data.insert(mime, property.value);
+                            data.insert(mime_name.clone(), property.value);
+                            self.mime_atoms.get_mut().insert(mime_name, ev.target);
                         }
 
                         if let Some(&atom) = mimes.keys().next() {
@@ -295,6 +309,10 @@ impl<'a> Selection<'a> {
                 };
             }
             Event::XfixesSelectionNotify(ev) => {
+                if ev.owner == self.paste_window {
+                    return Ok(());
+                }
+
                 let transfer_atom = self.transfer_atoms.get()?;
                 conn.convert_selection(
                     self.transfer_window,
@@ -307,6 +325,96 @@ impl<'a> Selection<'a> {
 
                 self.tasks
                     .insert(transfer_atom, Task::new(TaskState::TargetsRequest));
+            }
+
+            // Handles paste requests
+            Event::SelectionRequest(ev) => {
+                let reply = |property| {
+                    conn.send_event(
+                        false,
+                        ev.requestor,
+                        EventMask::NO_EVENT,
+                        SelectionNotifyEvent {
+                            response_type: SELECTION_NOTIFY_EVENT,
+                            sequence: ev.sequence,
+                            time: ev.time,
+                            requestor: ev.requestor,
+                            selection: ev.selection,
+                            target: ev.target,
+                            property,
+                        },
+                    )?
+                    .check()?;
+                    Ok(())
+                };
+
+                let property = if ev.property == x11rb::NONE {
+                    // Obsolete client
+                    ev.target
+                } else {
+                    ev.property
+                };
+                if property == x11rb::NONE {
+                    return reply(x11rb::NONE);
+                }
+
+                let reply = |reply_property| {
+                    if reply_property == x11rb::NONE {
+                        conn.delete_property(ev.requestor, property)?.check()?;
+                    }
+                    reply(reply_property)
+                };
+
+                if ![self.atoms.CLIPBOARD, self.atoms.PRIMARY].contains(&ev.selection) {
+                    return reply(x11rb::NONE);
+                }
+                let Some(item_id) = self.paste_item_id else {
+                    return reply(x11rb::NONE);
+                };
+                let Some(item) = &self.items.iter().find(|i| i.id == item_id) else {
+                    return reply(x11rb::NONE);
+                };
+
+                let mut supported_atoms = Vec::new();
+                supported_atoms.push(self.atoms.TARGETS);
+                let mut requested_data: Option<&Vec<u8>> = None;
+                for (atom_name, data) in &item.data {
+                    let atom =
+                        get_or_create_mime_atom(self.conn, self.mime_atoms.get_mut(), atom_name)?;
+                    if atom != x11rb::NONE {
+                        supported_atoms.push(atom);
+                    }
+
+                    if atom == ev.target {
+                        requested_data = Some(data);
+                    }
+                }
+
+                if !supported_atoms.contains(&ev.target) {
+                    return reply(x11rb::NONE);
+                }
+
+                if ev.target == self.atoms.TARGETS {
+                    conn.change_property32(
+                        PropMode::REPLACE,
+                        ev.requestor,
+                        property,
+                        AtomEnum::ATOM,
+                        &supported_atoms,
+                    )?
+                    .check()?;
+                    return reply(property);
+                }
+
+                conn.change_property8(
+                    PropMode::REPLACE,
+                    ev.requestor,
+                    property,
+                    ev.target,
+                    requested_data.unwrap(),
+                )?
+                .check()?;
+                reply(property)?;
             }
             _ => {}
         }
@@ -321,6 +429,68 @@ impl<'a> Selection<'a> {
         self.tasks
             .retain(|_, task| now.duration_since(task.last_update) < OVERDUE_TIMEOUT);
     }
+
+    pub fn paste(&mut self, item_id: u64, cursor_original_pos: (i16, i16)) -> Result<()> {
+        self.conn
+            .set_selection_owner(self.paste_window, self.selection_atom, x11rb::CURRENT_TIME)?
+            .check()?;
+
+        let focused_window = self.conn.get_input_focus()?.reply()?.focus;
+        if focused_window == self.paste_window {
+            return Ok(());
+        }
+
+        let key = |type_, code| {
+            self.conn
+                .xtest_fake_input(type_, code, x11rb::CURRENT_TIME, self.screen.root, 1, 1, 0)
+        };
+        let move_cursor = |x, y| {
+            self.conn.xtest_fake_input(
+                MOTION_NOTIFY_EVENT,
+                0,
+                x11rb::CURRENT_TIME,
+                self.screen.root,
+                x,
+                y,
+                0,
+            )
+        };
+
+        if self.selection_atom == self.atoms.CLIPBOARD {
+            // Ctrl + V
+            key(KEY_PRESS_EVENT, 37)?;
+            key(KEY_PRESS_EVENT, 55)?;
+            key(KEY_RELEASE_EVENT, 55)?;
+            key(KEY_RELEASE_EVENT, 37)?;
+        } else if self.selection_atom == self.atoms.PRIMARY {
+            let cursor_current_pos = self.conn.query_pointer(self.screen.root)?.reply()?;
+
+            // middle mouse button
+            move_cursor(cursor_original_pos.0, cursor_original_pos.1)?;
+            key(BUTTON_PRESS_EVENT, 2)?;
+            key(BUTTON_RELEASE_EVENT, 2)?;
+            move_cursor(cursor_current_pos.root_x, cursor_current_pos.root_y)?;
+        }
+        self.conn.flush()?;
+
+        self.paste_item_id = Some(item_id);
+
+        Ok(())
+    }
+}
+
+fn get_or_create_mime_atom(
+    conn: &XCBConnection,
+    mime_atoms: &mut HashMap<String, Atom>,
+    name: &str,
+) -> Result<Atom> {
+    if let Some(atom) = mime_atoms.get(name) {
+        return Ok(*atom);
+    }
+
+    let atom = conn.intern_atom(false, name.as_bytes())?.reply()?.atom;
+    mime_atoms.insert(name.to_string(), atom);
+    Ok(atom)
 }
 
 fn filter_mimes(mimes: HashMap<Atom, String>) -> HashMap<Atom, String> {

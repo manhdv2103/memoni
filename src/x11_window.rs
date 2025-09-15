@@ -2,8 +2,8 @@ extern crate x11rb;
 
 use std::cell::Cell;
 use std::os::unix::ffi::OsStringExt as _;
-use std::{thread, time};
 use std::{cmp, ffi::OsString};
+use std::{thread, time};
 
 use anyhow::Result;
 use x11rb::connection::Connection;
@@ -41,6 +41,7 @@ pub struct X11Window {
     pub width: u16,
     pub height: u16,
     pub background_color: u32,
+    pub win_opened_cursor_pos: Cell<(i16, i16)>,
     win_event_mask: EventMask,
     win_pos: Cell<(i16, i16)>,
 }
@@ -135,14 +136,20 @@ impl X11Window {
             background_color,
             win_event_mask,
             win_pos: Cell::new((0, 0)),
+            win_opened_cursor_pos: Cell::new((0, 0)),
         })
     }
 
     pub fn show_window(&self) -> Result<()> {
+        let pointer = self.conn.query_pointer(self.screen.root)?.reply()?;
+        self.win_opened_cursor_pos
+            .set((pointer.root_x, pointer.root_y));
+
         let (x, y) = calculate_window_pos(
             &self.conn,
             &self.screen,
             &self.atoms,
+            self.win_opened_cursor_pos.get(),
             self.width,
             self.height,
         )?;
@@ -231,19 +238,23 @@ impl X11Window {
     pub fn get_current_win_pos(&self) -> (i16, i16) {
         self.win_pos.get()
     }
+
+    pub fn get_win_opened_cursor_pos(&self) -> (i16, i16) {
+        self.win_opened_cursor_pos.get()
+    }
 }
 
 fn calculate_window_pos(
     conn: &XCBConnection,
     screen: &Screen,
     atoms: &Atoms,
+    cursor_pos: (i16, i16),
     width: u16,
     height: u16,
 ) -> Result<(i16, i16)> {
     let spacing = 10;
-    let pointer = conn.query_pointer(screen.root)?.reply()?;
-    let px = pointer.root_x as i32;
-    let py = pointer.root_y as i32;
+    let px = cursor_pos.0 as i32;
+    let py = cursor_pos.1 as i32;
 
     let width = width as i32;
     let height = height as i32;
