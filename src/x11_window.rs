@@ -284,8 +284,8 @@ fn calculate_window_pos(
             .map(|pm| fm.name != pm.name)
             .unwrap_or(true)
     {
-        let x = (fm.width as i32 - fm.x as i32 - width) / 2;
-        let y = (fm.height as i32 - fm.y as i32 - height) / 2;
+        let x = (fm.width as i32 - width) / 2 + fm.x as i32;
+        let y = (fm.height as i32 - height) / 2 + fm.y as i32;
         return Ok((
             x.clamp(i16::MIN as i32, i16::MAX as i32) as i16,
             y.clamp(i16::MIN as i32, i16::MAX as i32) as i16,
