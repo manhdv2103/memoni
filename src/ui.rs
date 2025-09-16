@@ -1,5 +1,8 @@
-use anyhow::Result;
-use egui::{FullOutput, RawInput};
+use std::{ffi::CString, fs, path::PathBuf, sync::Arc};
+
+use anyhow::{Result, anyhow};
+use egui::{FontData, FontDefinitions, FontFamily, FontTweak, FullOutput, RawInput};
+use fontconfig::Fontconfig;
 
 use crate::{config::Config, selection::SelectionItem, utils::is_plaintext_mime};
 
@@ -24,7 +27,46 @@ impl<'a> Ui<'a> {
             }
         });
 
+        if let Some(font_family) = &styling.font_family {
+            if let Some(font_path) = Self::find_font(font_family)? {
+                let mut fonts = FontDefinitions::default();
+                fonts.font_data.insert(
+                    "config_font".to_owned(),
+                    Arc::new(FontData::from_owned(fs::read(font_path)?).tweak(FontTweak {
+                        baseline_offset_factor: styling.font_baseline_offset_factor,
+                        ..Default::default()
+                    })),
+                );
+
+                fonts
+                    .families
+                    .get_mut(&FontFamily::Proportional)
+                    .unwrap()
+                    .insert(0, "config_font".to_owned());
+
+                egui_ctx.set_fonts(fonts);
+            } else {
+                eprintln!("Warning: font family '{}' not found", font_family);
+            }
+        }
+
         Ok(Ui { egui_ctx, config })
+    }
+
+    fn find_font(font_family: &str) -> Result<Option<PathBuf>> {
+        let fc = Fontconfig::new().ok_or(anyhow!("failed to initialize fontconfig"))?;
+
+        let mut pat = fontconfig::Pattern::new(&fc);
+        let family = CString::new(font_family)?;
+        pat.add_string(fontconfig::FC_FAMILY, &family);
+        pat.add_integer(fontconfig::FC_WEIGHT, fontconfig::FC_WEIGHT_REGULAR);
+        pat.add_integer(fontconfig::FC_SLANT, fontconfig::FC_SLANT_ROMAN);
+        pat.add_integer(fontconfig::FC_WIDTH, fontconfig::FC_WIDTH_NORMAL);
+
+        let fonts = fontconfig::list_fonts(&pat, None);
+        let font = fonts.iter().next();
+
+        Ok(font.and_then(|f| f.filename().map(PathBuf::from)))
     }
 
     pub fn run<'b, I: IntoIterator<Item = &'b SelectionItem>>(
