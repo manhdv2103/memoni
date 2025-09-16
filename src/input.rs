@@ -35,8 +35,8 @@ impl<'a> Input<'a> {
             screen_rect: Some(Rect::from_min_size(
                 Pos2::new(0.0, 0.0),
                 Vec2::new(
-                    window.config.style.window_width as f32,
-                    window.config.style.window_height as f32,
+                    window.config.layout.window_dimensions.width as f32,
+                    window.config.layout.window_dimensions.height as f32,
                 ),
             )),
             ..Default::default()

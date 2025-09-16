@@ -12,7 +12,7 @@ use x11rb::protocol::xproto::{ConnectionExt as _, *};
 use x11rb::wrapper::ConnectionExt as _;
 use x11rb::xcb_ffi::XCBConnection;
 
-use crate::config::{Config, StylingConfig};
+use crate::config::{Config, Dimensions, LayoutConfig};
 
 x11rb::atom_manager! {
     pub Atoms: AtomsCookie {
@@ -63,7 +63,7 @@ impl<'a> X11Window<'a> {
             | EventMask::POINTER_MOTION;
         let win_aux = CreateWindowAux::new()
             .event_mask(win_event_mask)
-            .background_pixel(config.style.background_color)
+            .background_pixel(config.theme.background)
             .win_gravity(Gravity::NORTH_WEST)
             .override_redirect(1);
 
@@ -73,8 +73,8 @@ impl<'a> X11Window<'a> {
             screen.root,
             0,
             0,
-            config.style.window_width,
-            config.style.window_height,
+            config.layout.window_dimensions.width,
+            config.layout.window_dimensions.height,
             0,
             WindowClass::INPUT_OUTPUT,
             0,
@@ -246,12 +246,11 @@ impl<'a> X11Window<'a> {
             config,
             ..
         } = self;
-        let StylingConfig {
-            window_width: width,
-            window_height: height,
+        let LayoutConfig {
+            window_dimensions: Dimensions { width, height },
             cursor_gap: spacing,
             ..
-        } = config.style;
+        } = config.layout;
         let cursor_pos = win_opened_cursor_pos.get();
 
         let px = cursor_pos.0 as i32;

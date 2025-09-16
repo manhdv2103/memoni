@@ -63,10 +63,10 @@ impl<'a> OpenGLContext<'a> {
 
         let surface_attrs = SurfaceAttributesBuilder::<WindowSurface>::new().build(
             RawWindowHandle::Xcb(window_handle),
-            NonZero::new(window.config.style.window_width)
+            NonZero::new(window.config.layout.window_dimensions.width)
                 .unwrap()
                 .into(),
-            NonZero::new(window.config.style.window_height)
+            NonZero::new(window.config.layout.window_dimensions.height)
                 .unwrap()
                 .into(),
         );
@@ -113,11 +113,12 @@ impl<'a> OpenGLContext<'a> {
             viewport_output: _,
         } = full_output;
 
+        let background_color = self.window.config.theme.background;
         unsafe {
             use glow::HasContext as _;
-            let r = ((self.window.config.style.background_color >> 16) & 0xff) as f32 / 255.0;
-            let g = ((self.window.config.style.background_color >> 8) & 0xff) as f32 / 255.0;
-            let b = (self.window.config.style.background_color & 0xff) as f32 / 255.0;
+            let r = ((background_color >> 16) & 0xff) as f32 / 255.0;
+            let g = ((background_color >> 8) & 0xff) as f32 / 255.0;
+            let b = (background_color & 0xff) as f32 / 255.0;
             self.gl.clear_color(r, g, b, 1.0);
             self.gl.clear(glow::COLOR_BUFFER_BIT);
         }
@@ -130,8 +131,8 @@ impl<'a> OpenGLContext<'a> {
         let shapes = std::mem::take(&mut shapes);
         let clipped_primitives = egui_ctx.tessellate(shapes, pixels_per_point);
         let dimensions: [u32; 2] = [
-            self.window.config.style.window_width as _,
-            self.window.config.style.window_height as _,
+            self.window.config.layout.window_dimensions.width as _,
+            self.window.config.layout.window_dimensions.height as _,
         ];
         self.painter
             .paint_primitives(dimensions, pixels_per_point, &clipped_primitives);

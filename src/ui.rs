@@ -4,7 +4,11 @@ use anyhow::{Result, anyhow};
 use egui::{FontData, FontDefinitions, FontFamily, FontTweak, FullOutput, RawInput};
 use fontconfig::Fontconfig;
 
-use crate::{config::Config, selection::SelectionItem, utils::is_plaintext_mime};
+use crate::{
+    config::{Config, XY},
+    selection::SelectionItem,
+    utils::is_plaintext_mime,
+};
 
 pub struct Ui<'a> {
     pub egui_ctx: egui::Context,
@@ -14,26 +18,27 @@ pub struct Ui<'a> {
 impl<'a> Ui<'a> {
     pub fn new(config: &'a Config) -> Result<Self> {
         let egui_ctx = egui::Context::default();
-        let styling = &config.style;
+        let layout = &config.layout;
+        let font = &config.font;
 
         egui_ctx.style_mut(|style| {
             // style.debug.debug_on_hover = true;
             style.spacing.button_padding =
-                egui::vec2(styling.button_padding_x, styling.button_padding_y);
-            style.spacing.item_spacing = egui::vec2(styling.item_spacing_x, styling.item_spacing_y);
+                egui::vec2(layout.button_padding.x, layout.button_padding.y);
+            style.spacing.item_spacing = egui::vec2(layout.item_spacing.x, layout.item_spacing.y);
             style.interaction.selectable_labels = false;
             if let Some(font_id) = style.text_styles.get_mut(&egui::TextStyle::Body) {
-                *font_id = egui::FontId::proportional(styling.font_size);
+                *font_id = egui::FontId::proportional(font.size);
             }
         });
 
-        if let Some(font_family) = &styling.font_family {
+        if let Some(font_family) = &font.family {
             if let Some(font_path) = Self::find_font(font_family)? {
                 let mut fonts = FontDefinitions::default();
                 fonts.font_data.insert(
                     "config_font".to_owned(),
                     Arc::new(FontData::from_owned(fs::read(font_path)?).tweak(FontTweak {
-                        baseline_offset_factor: styling.font_baseline_offset_factor,
+                        baseline_offset_factor: font.baseline_offset_factor,
                         ..Default::default()
                     })),
                 );
@@ -83,9 +88,9 @@ impl<'a> Ui<'a> {
         }
 
         let mut run_result: Result<()> = Ok(());
-        let corner_radius = self.config.style.button_corner_radius;
-        let padding = self.config.style.window_padding;
-        let scroll_bar_margin = self.config.style.scroll_bar_margin;
+        let corner_radius = self.config.layout.button_corner_radius;
+        let padding = self.config.layout.window_padding;
+        let scroll_bar_margin = self.config.layout.scroll_bar_margin;
 
         let full_output = self.egui_ctx.run(egui_input, |ctx| {
             run_result = Self::container(ctx, padding, scroll_bar_margin, |ui| {
@@ -115,7 +120,7 @@ impl<'a> Ui<'a> {
 
     fn container(
         ctx: &egui::Context,
-        padding: i8,
+        padding: XY<i8>,
         scroll_bar_margin: f32,
         add_contents: impl FnOnce(&mut egui::Ui) -> Result<()>,
     ) -> Result<()> {
@@ -133,7 +138,7 @@ impl<'a> Ui<'a> {
                     .scroll_bar_rect(scroll_bar_rect)
                     .show(ui, |ui| {
                         egui::Frame::new()
-                            .inner_margin(egui::Margin::symmetric(padding, padding))
+                            .inner_margin(egui::Margin::symmetric(padding.x, padding.y))
                             .show(ui, |ui| {
                                 if let Err(e) = add_contents(ui) {
                                     err = Some(e);
