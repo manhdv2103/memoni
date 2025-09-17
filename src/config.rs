@@ -26,7 +26,7 @@ pub struct LayoutConfig {
     pub button_corner_radius: u8,
     pub item_spacing: XY<f32>,
     pub scroll_bar_margin: f32,
-    pub cursor_gap: i32,
+    pub pointer_gap: i32,
 }
 
 impl Default for LayoutConfig {
@@ -41,7 +41,7 @@ impl Default for LayoutConfig {
             button_corner_radius: 7,
             item_spacing: XY { x: 5.0, y: 5.0 },
             scroll_bar_margin: 8.0,
-            cursor_gap: 5,
+            pointer_gap: 5,
         }
     }
 }

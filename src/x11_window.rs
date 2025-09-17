@@ -41,14 +41,14 @@ pub struct X11Window<'a> {
     pub atoms: Atoms,
     pub win_id: u32,
     pub config: &'a Config,
-    pub win_opened_cursor_pos: Cell<(i16, i16)>,
-    pub always_follows_mouse: bool,
+    pub win_opened_pointer_pos: Cell<(i16, i16)>,
+    pub always_follows_pointer: bool,
     win_event_mask: EventMask,
     win_pos: Cell<(i16, i16)>,
 }
 
 impl<'a> X11Window<'a> {
-    pub fn new(config: &'a Config, always_follows_mouse: bool) -> Result<Self> {
+    pub fn new(config: &'a Config, always_follows_pointer: bool) -> Result<Self> {
         let (conn, screen_num) = XCBConnection::connect(None)?;
         let setup = conn.setup();
         let screen = setup.roots[screen_num].to_owned();
@@ -134,15 +134,15 @@ impl<'a> X11Window<'a> {
             win_id,
             config,
             win_event_mask,
-            always_follows_mouse,
+            always_follows_pointer,
             win_pos: Cell::new((0, 0)),
-            win_opened_cursor_pos: Cell::new((0, 0)),
+            win_opened_pointer_pos: Cell::new((0, 0)),
         })
     }
 
     pub fn show_window(&self) -> Result<()> {
         let pointer = self.conn.query_pointer(self.screen.root)?.reply()?;
-        self.win_opened_cursor_pos
+        self.win_opened_pointer_pos
             .set((pointer.root_x, pointer.root_y));
 
         let (x, y) = self.calculate_window_pos()?;
@@ -232,8 +232,8 @@ impl<'a> X11Window<'a> {
         self.win_pos.get()
     }
 
-    pub fn get_win_opened_cursor_pos(&self) -> (i16, i16) {
-        self.win_opened_cursor_pos.get()
+    pub fn get_win_opened_pointer_pos(&self) -> (i16, i16) {
+        self.win_opened_pointer_pos.get()
     }
 
     fn calculate_window_pos(&self) -> Result<(i16, i16)> {
@@ -241,20 +241,20 @@ impl<'a> X11Window<'a> {
             conn,
             screen,
             atoms,
-            win_opened_cursor_pos,
-            always_follows_mouse,
+            win_opened_pointer_pos,
+            always_follows_pointer,
             config,
             ..
         } = self;
         let LayoutConfig {
             window_dimensions: Dimensions { width, height },
-            cursor_gap: spacing,
+            pointer_gap: spacing,
             ..
         } = config.layout;
-        let cursor_pos = win_opened_cursor_pos.get();
+        let pointer_pos = win_opened_pointer_pos.get();
 
-        let px = cursor_pos.0 as i32;
-        let py = cursor_pos.1 as i32;
+        let px = pointer_pos.0 as i32;
+        let py = pointer_pos.1 as i32;
 
         let width = width as i32;
         let height = height as i32;
@@ -278,7 +278,7 @@ impl<'a> X11Window<'a> {
         });
 
         // pointer is in non-focused monitor, display the window in the middle of the focused monitor
-        if !always_follows_mouse
+        if !always_follows_pointer
             && let Some(fm) = focused_monitor
             && pointer_monitor
                 .as_ref()

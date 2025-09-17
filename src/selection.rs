@@ -446,7 +446,7 @@ impl<'a> Selection<'a> {
             .retain(|_, task| now.duration_since(task.last_update) < OVERDUE_TIMEOUT);
     }
 
-    pub fn paste(&mut self, item_id: u64, cursor_original_pos: (i16, i16)) -> Result<()> {
+    pub fn paste(&mut self, item_id: u64, pointer_original_pos: (i16, i16)) -> Result<()> {
         self.conn
             .set_selection_owner(self.paste_window, self.selection_atom, x11rb::CURRENT_TIME)?
             .check()?;
@@ -460,7 +460,7 @@ impl<'a> Selection<'a> {
             self.conn
                 .xtest_fake_input(type_, code, x11rb::CURRENT_TIME, self.screen.root, 1, 1, 0)
         };
-        let move_cursor = |x, y| {
+        let move_pointer = |x, y| {
             self.conn.xtest_fake_input(
                 MOTION_NOTIFY_EVENT,
                 0,
@@ -510,14 +510,14 @@ impl<'a> Selection<'a> {
                 }
             }
         } else if self.selection_atom == self.atoms.PRIMARY {
-            let cursor_current_pos = self.conn.query_pointer(self.screen.root)?.reply()?;
-            move_cursor(cursor_original_pos.0, cursor_original_pos.1)?;
+            let pointer_current_pos = self.conn.query_pointer(self.screen.root)?.reply()?;
+            move_pointer(pointer_original_pos.0, pointer_original_pos.1)?;
 
             // middle mouse button
             key(BUTTON_PRESS_EVENT, 2)?;
             key(BUTTON_RELEASE_EVENT, 2)?;
 
-            move_cursor(cursor_current_pos.root_x, cursor_current_pos.root_y)?;
+            move_pointer(pointer_current_pos.root_x, pointer_current_pos.root_y)?;
         }
         self.conn.flush()?;
 

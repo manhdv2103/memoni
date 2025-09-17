@@ -172,7 +172,7 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
 
     let main_loop_result = (|| -> Result<()> {
         let mut window_shown = false;
-        let mut mouse_seen = 0;
+        let mut pointer_button_press_count = 0;
         'main_loop: loop {
             let mut will_show_window = false;
             let mut will_hide_window = false;
@@ -233,16 +233,17 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
                 }
 
                 if let Event::ButtonPress(_) = event {
-                    mouse_seen += 1;
+                    pointer_button_press_count += 1;
                 }
 
+                // When clicking outside of the window, only a release event is sent
                 if let Event::ButtonRelease(ev) = event {
-                    if mouse_seen == 0 {
+                    if pointer_button_press_count == 0 {
                         if ev.event != window.win_id {
                             will_hide_window = true;
                         }
                     } else {
-                        mouse_seen -= 1;
+                        pointer_button_press_count -= 1;
                     }
                 }
 
@@ -286,7 +287,7 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
             }
 
             if let Some(id) = paste_item_id {
-                selection.paste(id, window.win_opened_cursor_pos.get())?;
+                selection.paste(id, window.win_opened_pointer_pos.get())?;
             }
         }
         Ok(())
