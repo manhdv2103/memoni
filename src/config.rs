@@ -1,27 +1,20 @@
 use anyhow::{Context, Result};
 use serde::Deserialize;
-use std::collections::HashSet;
+use serde_with::{FromInto, OneOrMany, serde_as};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use xkeysym::Keysym;
 
-#[derive(Deserialize, Debug)]
+#[serde_as]
+#[derive(Deserialize, Debug, Default)]
 #[serde(default)]
 pub struct Config {
-    pub terminals: HashSet<String>,
+    #[serde_as(as = "HashMap<_, OneOrMany<_>>")]
+    pub paste_bindings: HashMap<String, Vec<Binding>>,
     pub layout: LayoutConfig,
     pub font: FontConfig,
     pub theme: ThemeConfig,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            terminals: HashSet::new(),
-            layout: LayoutConfig::default(),
-            font: FontConfig::default(),
-            theme: ThemeConfig::default(),
-        }
-    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -85,18 +78,6 @@ impl Default for ThemeConfig {
     }
 }
 
-#[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
-pub struct XY<T: Default> {
-    pub x: T,
-    pub y: T,
-}
-
-#[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Dimensions {
-    pub width: u16,
-    pub height: u16,
-}
-
 impl Config {
     pub fn load() -> Result<Config> {
         let config_path = Self::get_config_path();
@@ -119,5 +100,62 @@ impl Config {
         path.push("memoni");
         path.push("config.toml");
         path
+    }
+}
+
+#[serde_as]
+#[derive(Deserialize, Debug)]
+pub struct Binding {
+    #[serde_as(as = "FromInto<CharOrNum>")]
+    pub key: u32,
+    #[serde(default)]
+    #[serde_as(as = "OneOrMany<_>")]
+    pub modifiers: Vec<Modifier>,
+}
+
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Modifier {
+    Control,
+    Shift,
+    Alt,
+    Meta,
+}
+
+impl From<Modifier> for Keysym {
+    fn from(value: Modifier) -> Self {
+        match value {
+            Modifier::Control => Keysym::Control_L,
+            Modifier::Shift => Keysym::Shift_L,
+            Modifier::Alt => Keysym::Alt_L,
+            Modifier::Meta => Keysym::Meta_L,
+        }
+    }
+}
+
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct XY<T: Default> {
+    pub x: T,
+    pub y: T,
+}
+
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Dimensions {
+    pub width: u16,
+    pub height: u16,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum CharOrNum {
+    Char(char),
+    Num(u32),
+}
+
+impl From<CharOrNum> for u32 {
+    fn from(value: CharOrNum) -> Self {
+        match value {
+            CharOrNum::Char(c) => c as u32,
+            CharOrNum::Num(n) => n,
+        }
     }
 }

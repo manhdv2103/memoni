@@ -5,4 +5,5 @@ pub mod opengl_context;
 pub mod selection;
 pub mod ui;
 pub mod utils;
+pub mod x11_key_converter;
 pub mod x11_window;

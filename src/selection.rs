@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use x11rb::protocol::{
     Event,
     xfixes::SelectionEventMask,
@@ -17,8 +17,15 @@ use x11rb::wrapper::ConnectionExt as _;
 use x11rb::xcb_ffi::XCBConnection;
 use x11rb::{connection::Connection, protocol::xfixes};
 use x11rb::{connection::RequestConnection as _, protocol::xtest::ConnectionExt as _};
+use xkeysym::Keysym;
 
-use crate::{atom_pool::AtomPool, config::Config, utils::plaintext_mime_score, x11_window::X11Window};
+use crate::{
+    atom_pool::AtomPool,
+    config::{Binding, Config, Modifier},
+    utils::plaintext_mime_score,
+    x11_key_converter::X11KeyConverter,
+    x11_window::X11Window,
+};
 
 // Heavily modified from https://github.com/SUPERCILEX/clipboard-history/blob/master/x11/src/main.rs
 
@@ -88,6 +95,7 @@ pub struct Selection<'a> {
 
     conn: &'a XCBConnection,
     screen: &'a Screen,
+    key_converter: &'a X11KeyConverter,
     config: &'a Config,
     selection_atom: Atom,
     atoms: Atoms,
@@ -102,6 +110,7 @@ pub struct Selection<'a> {
 impl<'a> Selection<'a> {
     pub fn new(
         window: &'a X11Window,
+        key_converter: &'a X11KeyConverter,
         selection_type: SelectionType,
         config: &'a Config,
     ) -> Result<Self> {
@@ -160,6 +169,7 @@ impl<'a> Selection<'a> {
             items: VecDeque::new(),
             conn,
             screen: &window.screen,
+            key_converter,
             config,
             selection_atom,
             atoms,
@@ -461,38 +471,52 @@ impl<'a> Selection<'a> {
                 0,
             )
         };
+        let keycode = |keysym| {
+            self.key_converter
+                .keysym_to_keycode(keysym)
+                .map(|kc| kc.raw() as u8)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "invalid key provided: {}",
+                        keysym.name().unwrap_or(&format!("<code {}>", keysym.raw()))
+                    )
+                })
+        };
 
         if self.selection_atom == self.atoms.CLIPBOARD {
-            let is_terminal = if let Some((instance_name, class_name)) =
+            let paste_bindings = &self.config.paste_bindings;
+            let bindings = if let Some((instance_name, class_name)) =
                 get_window_class(self.conn, focused_window)?
+                && let Some(bindings) = paste_bindings
+                    .get(&instance_name)
+                    .or_else(|| paste_bindings.get(&class_name))
             {
-                self.config.terminals.contains(&instance_name)
-                    || self.config.terminals.contains(&class_name)
+                bindings
             } else {
-                false
+                &vec![Binding {
+                    key: 'v' as u32,
+                    modifiers: vec![Modifier::Control],
+                }]
             };
 
-            if is_terminal {
-                // Shift
-                key(KEY_PRESS_EVENT, 50)?;
-            }
-
-            // Ctrl + V
-            key(KEY_PRESS_EVENT, 37)?;
-            key(KEY_PRESS_EVENT, 55)?;
-            key(KEY_RELEASE_EVENT, 55)?;
-            key(KEY_RELEASE_EVENT, 37)?;
-
-            if is_terminal {
-                key(KEY_RELEASE_EVENT, 50)?;
+            for binding in bindings {
+                for modifier in &binding.modifiers {
+                    key(KEY_PRESS_EVENT, keycode((*modifier).into())?)?;
+                }
+                key(KEY_PRESS_EVENT, keycode(Keysym::new(binding.key))?)?;
+                key(KEY_RELEASE_EVENT, keycode(Keysym::new(binding.key))?)?;
+                for modifier in binding.modifiers.iter().rev() {
+                    key(KEY_RELEASE_EVENT, keycode((*modifier).into())?)?;
+                }
             }
         } else if self.selection_atom == self.atoms.PRIMARY {
             let cursor_current_pos = self.conn.query_pointer(self.screen.root)?.reply()?;
+            move_cursor(cursor_original_pos.0, cursor_original_pos.1)?;
 
             // middle mouse button
-            move_cursor(cursor_original_pos.0, cursor_original_pos.1)?;
             key(BUTTON_PRESS_EVENT, 2)?;
             key(BUTTON_RELEASE_EVENT, 2)?;
+
             move_cursor(cursor_current_pos.root_x, cursor_current_pos.root_y)?;
         }
         self.conn.flush()?;

@@ -1,35 +1,21 @@
 use crate::{
     utils::{is_printable_char, keysym_to_egui_key},
+    x11_key_converter::X11KeyConverter,
     x11_window::X11Window,
 };
 use anyhow::Result;
 use egui::{Event, MouseWheelUnit, PointerButton, Pos2, RawInput, Rect, Vec2};
-use x11rb::{
-    connection::Connection as _,
-    protocol::{
-        Event as X11Event,
-        xproto::{ConnectionExt as _, GetKeyboardMappingReply},
-    },
-};
-use xkeysym::{KeyCode, Keysym, keysym};
+use x11rb::protocol::Event as X11Event;
+use xkeysym::Keysym;
 
 pub struct Input<'a> {
     pub egui_input: RawInput,
     window: &'a X11Window<'a>,
-    min_keycode: u8,
-    mapping: GetKeyboardMappingReply,
+    key_converter: &'a X11KeyConverter,
 }
 
 impl<'a> Input<'a> {
-    pub fn new(window: &'a X11Window) -> Result<Self> {
-        let window_setup = window.conn.setup();
-        let min_keycode = window_setup.min_keycode;
-        let max_keycode = window_setup.max_keycode;
-        let mapping_reply = window
-            .conn
-            .get_keyboard_mapping(min_keycode, max_keycode - min_keycode + 1)?
-            .reply()?;
-
+    pub fn new(window: &'a X11Window, key_converter: &'a X11KeyConverter) -> Result<Self> {
         let egui_input = RawInput {
             focused: true,
             screen_rect: Some(Rect::from_min_size(
@@ -45,8 +31,7 @@ impl<'a> Input<'a> {
         Ok(Input {
             egui_input,
             window,
-            min_keycode,
-            mapping: mapping_reply,
+            key_converter,
         })
     }
 
@@ -89,13 +74,7 @@ impl<'a> Input<'a> {
                 let pressed = matches!(event, X11Event::KeyPress(_));
                 let keycode = ev.detail;
 
-                if let Some(keysym) = keysym(
-                    KeyCode::new(keycode as u32),
-                    0,
-                    KeyCode::new(self.min_keycode as u32),
-                    self.mapping.keysyms_per_keycode,
-                    &self.mapping.keysyms,
-                ) {
+                if let Some(keysym) = self.key_converter.keycode_to_keysym(keycode.into()) {
                     if keysym.is_modifier_key() {
                         if keysym == Keysym::Alt_L || keysym == Keysym::Alt_R {
                             modifiers.alt = pressed;
