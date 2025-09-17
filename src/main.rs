@@ -258,6 +258,10 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
                 }
             }
 
+            if will_show_window {
+                input.reset_pointer_pos();
+            }
+
             if window_shown || will_show_window {
                 let full_output =
                     ui.run(input.egui_input.take(), &selection.items, |selected| {

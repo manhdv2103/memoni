@@ -124,4 +124,8 @@ impl<'a> Input<'a> {
             self.egui_input.events.push(egui_event);
         }
     }
+
+    pub fn reset_pointer_pos(&mut self) {
+        self.egui_input.events.push(Event::PointerMoved(Pos2::new(0.0, 0.0)));
+    }
 }
