@@ -8,7 +8,7 @@ use xkeysym::Keysym;
 
 #[serde_as]
 #[derive(Deserialize, Debug, Default)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Config {
     #[serde_as(as = "HashMap<_, OneOrMany<_>>")]
     pub paste_bindings: HashMap<String, Vec<Binding>>,
@@ -18,7 +18,7 @@ pub struct Config {
 }
 
 #[derive(Deserialize, Debug)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct LayoutConfig {
     pub window_dimensions: Dimensions,
     pub window_padding: XY<i8>,
@@ -47,7 +47,7 @@ impl Default for LayoutConfig {
 }
 
 #[derive(Deserialize, Debug)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct FontConfig {
     pub family: Option<String>,
     pub size: f32,
@@ -65,7 +65,7 @@ impl Default for FontConfig {
 }
 
 #[derive(Deserialize, Debug)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct ThemeConfig {
     pub background: u32,
 }
