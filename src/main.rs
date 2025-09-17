@@ -142,8 +142,8 @@ fn client(args: ClientArgs, socket_dir: &Path) -> Result<()> {
 
 fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
     let socket_path = socket_dir.join(format!("{}.sock", args.selection));
-
     let config = Config::load()?;
+
     let window = X11Window::new(&config, args.selection == SelectionType::PRIMARY)?;
     let mut gl_context = unsafe { OpenGLContext::new(&window)? };
     let key_converter = X11KeyConverter::new(&window.conn)?;
@@ -258,7 +258,7 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
                 }
             }
 
-            if window_shown {
+            if window_shown || will_show_window {
                 let full_output =
                     ui.run(input.egui_input.take(), &selection.items, |selected| {
                         will_hide_window = true;
