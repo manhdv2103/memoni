@@ -18,7 +18,7 @@ use x11rb::xcb_ffi::XCBConnection;
 use x11rb::{connection::Connection, protocol::xfixes};
 use x11rb::{connection::RequestConnection as _, protocol::xtest::ConnectionExt as _};
 
-use crate::{atom_pool::AtomPool, config::Config, utils::is_plaintext_mime, x11_window::X11Window};
+use crate::{atom_pool::AtomPool, config::Config, utils::plaintext_mime_score, x11_window::X11Window};
 
 // Heavily modified from https://github.com/SUPERCILEX/clipboard-history/blob/master/x11/src/main.rs
 
@@ -520,12 +520,14 @@ fn get_or_create_mime_atom(
 fn filter_mimes(mimes: HashMap<Atom, String>) -> HashMap<Atom, String> {
     let mut filtered_mimes = HashMap::new();
     let mut plain: Option<(Atom, &str)> = None;
+    let mut plain_score = 0;
     let mut image: Option<(Atom, &str)> = None;
 
     for (atom, mime) in mimes.iter() {
-        if is_plaintext_mime(mime) {
-            if plain.is_none_or(|(_, p)| p.contains(';') && !mime.contains(';')) {
+        if let Some(score) = plaintext_mime_score(mime) {
+            if plain.is_none_or(|_| score > plain_score) {
                 plain = Some((*atom, mime));
+                plain_score = score;
             }
         } else if mime.starts_with("image/") {
             if image.is_none() {

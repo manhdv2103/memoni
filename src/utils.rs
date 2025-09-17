@@ -126,17 +126,22 @@ pub fn is_printable_char(chr: char) -> bool {
     !is_in_private_use_area && !chr.is_ascii_control()
 }
 
-pub fn is_plaintext_mime(mime: &str) -> bool {
-    const TEXT_MIMES: &[&str] = &[
+pub fn plaintext_mime_score(mime: &str) -> Option<usize> {
+    // low to high
+    const TEXT_MIMES_ORDER: &[&str] = &[
         "",
-        "text",
-        "string",
-        "utf8_string",
-        "text/plain",
-        "text/plain;charset=utf-8",
         "text/plain;charset=us-ascii",
         "text/plain;charset=unicode",
+        "text",
+        "string",
+        "text/plain",
+        "text/plain;charset=utf-8",
+        "utf8_string",
     ];
 
-    TEXT_MIMES.iter().any(|b| mime.eq_ignore_ascii_case(b))
+    TEXT_MIMES_ORDER.iter().position(|b| mime.eq_ignore_ascii_case(b))
+}
+
+pub fn is_plaintext_mime(mime: &str) -> bool {
+    plaintext_mime_score(mime).is_some()
 }
