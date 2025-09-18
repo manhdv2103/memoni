@@ -20,10 +20,7 @@ impl<'a> Input<'a> {
             focused: true,
             screen_rect: Some(Rect::from_min_size(
                 Pos2::new(0.0, 0.0),
-                Vec2::new(
-                    window.config.layout.window_dimensions.width as f32,
-                    window.config.layout.window_dimensions.height as f32,
-                ),
+                Vec2::new(window.dimensions.width as _, window.dimensions.height as _),
             )),
             ..Default::default()
         };
@@ -126,6 +123,8 @@ impl<'a> Input<'a> {
     }
 
     pub fn reset_pointer_pos(&mut self) {
-        self.egui_input.events.push(Event::PointerMoved(Pos2::new(0.0, 0.0)));
+        self.egui_input
+            .events
+            .push(Event::PointerMoved(Pos2::new(0.0, 0.0)));
     }
 }

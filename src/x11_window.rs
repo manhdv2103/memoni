@@ -40,9 +40,10 @@ pub struct X11Window<'a> {
     pub screen_num: usize,
     pub atoms: Atoms,
     pub win_id: u32,
-    pub config: &'a Config,
+    pub dimensions: Dimensions,
     pub win_opened_pointer_pos: Cell<(i16, i16)>,
     pub always_follows_pointer: bool,
+    config: &'a Config,
     win_event_mask: EventMask,
     win_pos: Cell<(i16, i16)>,
 }
@@ -63,7 +64,7 @@ impl<'a> X11Window<'a> {
             | EventMask::POINTER_MOTION;
         let win_aux = CreateWindowAux::new()
             .event_mask(win_event_mask)
-            .background_pixel(config.theme.background)
+            .background_pixel(*config.theme.background)
             .win_gravity(Gravity::NORTH_WEST)
             .override_redirect(1);
 
@@ -132,6 +133,7 @@ impl<'a> X11Window<'a> {
             screen_num,
             atoms,
             win_id,
+            dimensions: config.layout.window_dimensions,
             config,
             win_event_mask,
             always_follows_pointer,

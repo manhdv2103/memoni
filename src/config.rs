@@ -1,8 +1,10 @@
 use anyhow::{Context, Result};
+use egui::Color32;
 use serde::Deserialize;
 use serde_with::{FromInto, OneOrMany, serde_as};
 use std::collections::HashMap;
 use std::fs;
+use std::ops::Deref;
 use std::path::PathBuf;
 use xkeysym::Keysym;
 
@@ -67,13 +69,13 @@ impl Default for FontConfig {
 #[derive(Deserialize, Debug)]
 #[serde(default, deny_unknown_fields)]
 pub struct ThemeConfig {
-    pub background: u32,
+    pub background: Color,
 }
 
 impl Default for ThemeConfig {
     fn default() -> Self {
         Self {
-            background: 0x191919,
+            background: Color(0x191919),
         }
     }
 }
@@ -129,6 +131,25 @@ impl From<Modifier> for Keysym {
             Modifier::Alt => Keysym::Alt_L,
             Modifier::Meta => Keysym::Meta_L,
         }
+    }
+}
+
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Color(u32);
+
+impl Deref for Color {
+    type Target = u32;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<Color> for Color32 {
+    fn from(value: Color) -> Self {
+        let r = ((*value >> 16) & 0xff) as u8;
+        let g = ((*value >> 8) & 0xff) as u8;
+        let b = (*value & 0xff) as u8;
+        Color32::from_rgb(r, g, b)
     }
 }
 

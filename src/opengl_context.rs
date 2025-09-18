@@ -1,5 +1,6 @@
-use crate::x11_window::X11Window;
+use crate::{config::Config, x11_window::X11Window};
 use anyhow::{Context as _, Result};
+use egui::Color32;
 use egui_glow::Painter;
 use glow::Context as GlowContext;
 use glutin::{
@@ -17,17 +18,18 @@ use std::{
     sync::Arc,
 };
 
-pub struct OpenGLContext<'a> {
+pub struct OpenGLContext {
     pub display: Display,
-    pub window: &'a X11Window<'a>,
+    pub dimensions: [u32; 2],
+    pub background: (f32, f32, f32),
     pub surface: Surface<WindowSurface>,
     pub context: PossiblyCurrentContext,
     pub gl: Arc<GlowContext>,
     pub painter: Painter,
 }
 
-impl<'a> OpenGLContext<'a> {
-    pub unsafe fn new(window: &'a X11Window) -> Result<Self> {
+impl OpenGLContext {
+    pub unsafe fn new(window: &X11Window, config: &Config) -> Result<Self> {
         let display_handle = XcbDisplayHandle::new(
             NonNull::new(window.conn.get_raw_xcb_connection()),
             window.screen_num as _,
@@ -48,7 +50,7 @@ impl<'a> OpenGLContext<'a> {
             .with_stencil_size(0)
             .with_transparency(true);
 
-        let config = unsafe {
+        let display_config = unsafe {
             gl_display
                 .find_configs(config_template_builder.build())?
                 .next()
@@ -63,19 +65,19 @@ impl<'a> OpenGLContext<'a> {
 
         let surface_attrs = SurfaceAttributesBuilder::<WindowSurface>::new().build(
             RawWindowHandle::Xcb(window_handle),
-            NonZero::new(window.config.layout.window_dimensions.width)
+            NonZero::new(config.layout.window_dimensions.width)
                 .unwrap()
                 .into(),
-            NonZero::new(window.config.layout.window_dimensions.height)
+            NonZero::new(config.layout.window_dimensions.height)
                 .unwrap()
                 .into(),
         );
 
-        let surface = unsafe { gl_display.create_window_surface(&config, &surface_attrs)? };
+        let surface = unsafe { gl_display.create_window_surface(&display_config, &surface_attrs)? };
 
         let ctx: PossiblyCurrentContext = unsafe {
             gl_display
-                .create_context(&config, &attrs)?
+                .create_context(&display_config, &attrs)?
                 .make_current(&surface)?
         };
 
@@ -90,9 +92,16 @@ impl<'a> OpenGLContext<'a> {
 
         let painter = Painter::new(gl.clone(), "", None, true)?;
 
+        let background_color: Color32 = config.theme.background.into();
+        let (r, g, b, _) = background_color.to_tuple();
+
         Ok(OpenGLContext {
             display: gl_display,
-            window,
+            dimensions: [
+                config.layout.window_dimensions.width as _,
+                config.layout.window_dimensions.height as _,
+            ],
+            background: (r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0),
             surface,
             context: ctx,
             gl,
@@ -113,12 +122,9 @@ impl<'a> OpenGLContext<'a> {
             viewport_output: _,
         } = full_output;
 
-        let background_color = self.window.config.theme.background;
+        let (r, g, b) = self.background;
         unsafe {
             use glow::HasContext as _;
-            let r = ((background_color >> 16) & 0xff) as f32 / 255.0;
-            let g = ((background_color >> 8) & 0xff) as f32 / 255.0;
-            let b = (background_color & 0xff) as f32 / 255.0;
             self.gl.clear_color(r, g, b, 1.0);
             self.gl.clear(glow::COLOR_BUFFER_BIT);
         }
@@ -130,12 +136,8 @@ impl<'a> OpenGLContext<'a> {
 
         let shapes = std::mem::take(&mut shapes);
         let clipped_primitives = egui_ctx.tessellate(shapes, pixels_per_point);
-        let dimensions: [u32; 2] = [
-            self.window.config.layout.window_dimensions.width as _,
-            self.window.config.layout.window_dimensions.height as _,
-        ];
         self.painter
-            .paint_primitives(dimensions, pixels_per_point, &clipped_primitives);
+            .paint_primitives(self.dimensions, pixels_per_point, &clipped_primitives);
 
         for id in textures_delta.free.drain(..) {
             self.painter.free_texture(id);
