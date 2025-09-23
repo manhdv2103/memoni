@@ -1,8 +1,8 @@
 extern crate x11rb;
 
 use std::cell::Cell;
+use std::ffi::OsString;
 use std::os::unix::ffi::OsStringExt as _;
-use std::{ffi::OsString};
 use std::{thread, time};
 
 use anyhow::Result;
@@ -142,7 +142,7 @@ impl<'a> X11Window<'a> {
         })
     }
 
-    pub fn show_window(&self) -> Result<()> {
+    pub fn update_window_pos(&self) -> Result<()> {
         let pointer = self.conn.query_pointer(self.screen.root)?.reply()?;
         self.win_opened_pointer_pos
             .set((pointer.root_x, pointer.root_y));
@@ -154,6 +154,10 @@ impl<'a> X11Window<'a> {
         )?;
         self.win_pos.set((x, y));
 
+        Ok(())
+    }
+
+    pub fn show_window(&self) -> Result<()> {
         self.conn.map_window(self.win_id)?;
         self.conn.flush()?;
         Ok(())

@@ -1,7 +1,7 @@
 use crate::{utils::keysym_to_egui_key, x11_key_converter::X11KeyConverter, x11_window::X11Window};
 use anyhow::Result;
 use egui::{Event, MouseWheelUnit, PointerButton, Pos2, RawInput, Rect, Vec2};
-use x11rb::protocol::Event as X11Event;
+use x11rb::protocol::{Event as X11Event, xproto::ConnectionExt as _};
 use xkeysym::Keysym;
 
 pub struct Input<'a> {
@@ -111,9 +111,19 @@ impl<'a> Input<'a> {
         }
     }
 
-    pub fn reset_pointer_pos(&mut self) {
-        self.egui_input
-            .events
-            .push(Event::PointerMoved(Pos2::new(0.0, 0.0)));
+    pub fn update_pointer_pos(&mut self) -> Result<()> {
+        let pointer = self
+            .window
+            .conn
+            .query_pointer(self.window.screen.root)?
+            .reply()?;
+        let (x, y) = self.window.get_current_win_pos();
+
+        self.egui_input.events.push(Event::PointerMoved(Pos2::new(
+            (pointer.root_x - x) as f32,
+            (pointer.root_y - y) as f32,
+        )));
+
+        Ok(())
     }
 }

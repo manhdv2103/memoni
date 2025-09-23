@@ -260,7 +260,8 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
             }
 
             if will_show_window {
-                input.reset_pointer_pos();
+                window.update_window_pos()?;
+                input.update_pointer_pos()?;
                 ui.reset();
             }
 
