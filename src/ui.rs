@@ -32,6 +32,7 @@ impl<'a> Ui<'a> {
             style.spacing.item_spacing = egui::vec2(layout.item_spacing.x, layout.item_spacing.y);
             style.interaction.selectable_labels = false;
 
+            style.visuals.override_text_color = Some(theme.foreground.into());
             for widget in [
                 &mut style.visuals.widgets.inactive,
                 &mut style.visuals.widgets.hovered,
@@ -169,6 +170,13 @@ impl<'a> Ui<'a> {
 
             self.item_ids.clear();
             run_result = Self::container(ctx, padding, scroll_bar_margin, theme, |ui| {
+                if render_items.is_empty() {
+                    ui.centered_and_justified(|ui| {
+                        ui.add(egui::Label::new("Your clipboard history will appear here."))
+                    });
+                    return Ok(());
+                }
+
                 for (i, item) in render_items.iter().enumerate() {
                     // Focused highlight is too flickery, so we will highlight the button ourself
                     let btn_fill = if i == self.active_idx {
