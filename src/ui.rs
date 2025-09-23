@@ -1,7 +1,7 @@
 use std::{ffi::CString, fs, path::PathBuf, sync::Arc};
 
 use anyhow::{Result, anyhow};
-use egui::{FontData, FontDefinitions, FontFamily, FontTweak, FullOutput, RawInput};
+use egui::{FontData, FontDefinitions, FontFamily, FontTweak, FullOutput, RawInput, Stroke};
 use fontconfig::Fontconfig;
 
 use crate::{
@@ -13,6 +13,9 @@ use crate::{
 pub struct Ui<'a> {
     pub egui_ctx: egui::Context,
     config: &'a Config,
+    item_ids: Vec<egui::Id>,
+    hovered_idx: usize,
+    active_idx: usize,
 }
 
 impl<'a> Ui<'a> {
@@ -20,6 +23,7 @@ impl<'a> Ui<'a> {
         let egui_ctx = egui::Context::default();
         let layout = &config.layout;
         let font = &config.font;
+        let theme = &config.theme;
 
         egui_ctx.style_mut(|style| {
             // style.debug.debug_on_hover = true;
@@ -27,6 +31,18 @@ impl<'a> Ui<'a> {
                 egui::vec2(layout.button_padding.x, layout.button_padding.y);
             style.spacing.item_spacing = egui::vec2(layout.item_spacing.x, layout.item_spacing.y);
             style.interaction.selectable_labels = false;
+
+            for widget in [
+                &mut style.visuals.widgets.inactive,
+                &mut style.visuals.widgets.hovered,
+                &mut style.visuals.widgets.active,
+            ] {
+                widget.fg_stroke.color = theme.foreground.into();
+                widget.weak_bg_fill = theme.button_background.into();
+                widget.bg_stroke = Stroke::NONE;
+                widget.expansion = 0.0;
+            }
+
             if let Some(font_id) = style.text_styles.get_mut(&egui::TextStyle::Body) {
                 *font_id = egui::FontId::proportional(font.size);
             }
@@ -55,7 +71,13 @@ impl<'a> Ui<'a> {
             }
         }
 
-        Ok(Ui { egui_ctx, config })
+        Ok(Ui {
+            egui_ctx,
+            config,
+            item_ids: vec![],
+            hovered_idx: 0,
+            active_idx: 0,
+        })
     }
 
     fn find_font(font_family: &str) -> Result<Option<PathBuf>> {
@@ -75,8 +97,8 @@ impl<'a> Ui<'a> {
     }
 
     pub fn run<'b, I: IntoIterator<Item = &'b SelectionItem>>(
-        &self,
-        egui_input: RawInput,
+        &mut self,
+        mut egui_input: RawInput,
         selection_items: I,
         mut on_paste: impl FnMut(&SelectionItem),
     ) -> Result<FullOutput> {
@@ -91,19 +113,80 @@ impl<'a> Ui<'a> {
         let corner_radius = self.config.layout.button_corner_radius;
         let padding = self.config.layout.window_padding;
         let scroll_bar_margin = self.config.layout.scroll_bar_margin;
+        let theme = &self.config.theme;
+
+        egui_input.events.retain(|ev| {
+            // We will handle key events ourself
+            if let egui::Event::Key {
+                key,
+                pressed,
+                modifiers,
+                ..
+            } = ev
+            {
+                if *pressed {
+                    let focus_direction = match key {
+                        egui::Key::ArrowUp | egui::Key::K => -1,
+                        egui::Key::P if modifiers.ctrl => -1,
+                        egui::Key::Tab if modifiers.shift => -1,
+                        egui::Key::ArrowDown | egui::Key::J => 1,
+                        egui::Key::N if modifiers.ctrl => 1,
+                        egui::Key::Tab => 1,
+                        _ => 0,
+                    };
+                    if focus_direction != 0 {
+                        self.active_idx = (self.active_idx as isize + focus_direction)
+                            .rem_euclid(self.item_ids.len() as isize)
+                            as usize;
+                    }
+
+                    if matches!(key, egui::Key::Enter | egui::Key::Space)
+                        && let Some(item) = render_items.get(self.active_idx)
+                    {
+                        on_paste(item.1);
+                    }
+                }
+                return false;
+            }
+
+            true
+        });
 
         let full_output = self.egui_ctx.run(egui_input, |ctx| {
+            let prev_hovered_idx = self.hovered_idx;
+            ctx.viewport(|vp| {
+                if let Some(idx) = self
+                    .item_ids
+                    .iter()
+                    .position(|id| vp.interact_widgets.hovered.contains(id))
+                {
+                    self.hovered_idx = idx;
+                }
+            });
+            if prev_hovered_idx != self.hovered_idx {
+                self.active_idx = self.hovered_idx;
+            }
+
+            self.item_ids.clear();
             run_result = Self::container(ctx, padding, scroll_bar_margin, |ui| {
-                for item in &render_items {
-                    if ui
-                        .add(
-                            egui::Button::new(item.0)
-                                .truncate()
-                                .corner_radius(egui::CornerRadius::same(corner_radius))
-                                .min_size(egui::vec2(ui.available_width(), 0.0)),
-                        )
-                        .clicked()
-                    {
+                for (i, item) in render_items.iter().enumerate() {
+                    // Focused highlight is too flickery, so we will highlight the button ourself
+                    let btn_fill = if i == self.active_idx {
+                        theme.button_active_background
+                    } else {
+                        theme.button_background
+                    };
+
+                    let btn = ui.add(
+                        egui::Button::new(item.0)
+                            .truncate()
+                            .corner_radius(egui::CornerRadius::same(corner_radius))
+                            .min_size(egui::vec2(ui.available_width(), 0.0))
+                            .fill(btn_fill),
+                    );
+                    self.item_ids.push(btn.id);
+
+                    if btn.clicked() {
                         on_paste(item.1);
                     }
                 }
@@ -116,6 +199,11 @@ impl<'a> Ui<'a> {
             Ok(_) => Ok(full_output),
             Err(err) => Err(err),
         }
+    }
+
+    pub fn reset(&mut self) {
+        self.active_idx = 0;
+        self.hovered_idx = 0;
     }
 
     fn container(

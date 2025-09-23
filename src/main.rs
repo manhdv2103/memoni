@@ -149,7 +149,7 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
     let key_converter = X11KeyConverter::new(&window.conn)?;
     let mut input = Input::new(&window, &key_converter)?;
     let mut selection = Selection::new(&window, &key_converter, args.selection.clone(), &config)?;
-    let ui = Ui::new(&config)?;
+    let mut ui = Ui::new(&config)?;
 
     let mut signals = Signals::new(TERM_SIGNALS)?;
     let (mut poll, socket_listener) = match create_poll(&window.conn, &socket_path, &mut signals) {
@@ -261,6 +261,7 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
 
             if will_show_window {
                 input.reset_pointer_pos();
+                ui.reset();
             }
 
             if window_shown || will_show_window {

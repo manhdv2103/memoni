@@ -117,15 +117,6 @@ pub fn keysym_to_egui_key(ks: Keysym) -> Option<Key> {
     })
 }
 
-// https://github.com/emilk/egui/blob/b24a56d3f7dbde53812f465c18868fe39cd7f84b/crates/egui-winit/src/lib.rs#L1041
-pub fn is_printable_char(chr: char) -> bool {
-    let is_in_private_use_area = ('\u{e000}'..='\u{f8ff}').contains(&chr)
-        || ('\u{f0000}'..='\u{ffffd}').contains(&chr)
-        || ('\u{100000}'..='\u{10fffd}').contains(&chr);
-
-    !is_in_private_use_area && !chr.is_ascii_control()
-}
-
 pub fn plaintext_mime_score(mime: &str) -> Option<usize> {
     // low to high
     const TEXT_MIMES_ORDER: &[&str] = &[

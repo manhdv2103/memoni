@@ -1,8 +1,4 @@
-use crate::{
-    utils::{is_printable_char, keysym_to_egui_key},
-    x11_key_converter::X11KeyConverter,
-    x11_window::X11Window,
-};
+use crate::{utils::keysym_to_egui_key, x11_key_converter::X11KeyConverter, x11_window::X11Window};
 use anyhow::Result;
 use egui::{Event, MouseWheelUnit, PointerButton, Pos2, RawInput, Rect, Vec2};
 use x11rb::protocol::Event as X11Event;
@@ -86,13 +82,6 @@ impl<'a> Input<'a> {
                     }
 
                     if let Some(key) = keysym_to_egui_key(Keysym::new(keysym.into())) {
-                        if pressed
-                            && key.name().len() == 1
-                            && is_printable_char(*key.name().as_bytes().first().unwrap() as _)
-                        {
-                            break 'blk Some(Event::Text(key.name().to_owned()));
-                        }
-
                         break 'blk Some(Event::Key {
                             key,
                             physical_key: None,

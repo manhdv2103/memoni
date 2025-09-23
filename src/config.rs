@@ -70,12 +70,18 @@ impl Default for FontConfig {
 #[serde(default, deny_unknown_fields)]
 pub struct ThemeConfig {
     pub background: Color,
+    pub foreground: Color,
+    pub button_background: Color,
+    pub button_active_background: Color,
 }
 
 impl Default for ThemeConfig {
     fn default() -> Self {
         Self {
             background: Color(0x191919),
+            foreground: Color(0xbbbbbb),
+            button_background: Color(0x2f2f2f),
+            button_active_background: Color(0x454545),
         }
     }
 }
