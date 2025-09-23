@@ -5,7 +5,7 @@ use egui::{FontData, FontDefinitions, FontFamily, FontTweak, FullOutput, RawInpu
 use fontconfig::Fontconfig;
 
 use crate::{
-    config::{Config, XY},
+    config::{Config, ThemeConfig, XY},
     selection::SelectionItem,
     utils::is_plaintext_mime,
 };
@@ -168,7 +168,7 @@ impl<'a> Ui<'a> {
             }
 
             self.item_ids.clear();
-            run_result = Self::container(ctx, padding, scroll_bar_margin, |ui| {
+            run_result = Self::container(ctx, padding, scroll_bar_margin, theme, |ui| {
                 for (i, item) in render_items.iter().enumerate() {
                     // Focused highlight is too flickery, so we will highlight the button ourself
                     let btn_fill = if i == self.active_idx {
@@ -210,6 +210,7 @@ impl<'a> Ui<'a> {
         ctx: &egui::Context,
         padding: XY<i8>,
         scroll_bar_margin: f32,
+        theme: &ThemeConfig,
         add_contents: impl FnOnce(&mut egui::Ui) -> Result<()>,
     ) -> Result<()> {
         let mut err: Option<anyhow::Error> = None;
@@ -221,10 +222,24 @@ impl<'a> Ui<'a> {
                     ui.min_rect().min + egui::vec2(0.0, scroll_bar_margin),
                     ui.max_rect().max - egui::vec2(0.0, scroll_bar_margin),
                 );
+
+                let original_style = (*ui.ctx().style()).clone();
+                let mut scrollbar_style = original_style.clone();
+                scrollbar_style.visuals.extreme_bg_color = theme.scroll_background.into();
+                for widget in [
+                    &mut scrollbar_style.visuals.widgets.inactive,
+                    &mut scrollbar_style.visuals.widgets.hovered,
+                    &mut scrollbar_style.visuals.widgets.active,
+                ] {
+                    widget.fg_stroke.color = theme.scroll_handle.into();
+                }
+                ui.set_style(scrollbar_style);
+
                 egui::ScrollArea::vertical()
                     .auto_shrink(false)
                     .scroll_bar_rect(scroll_bar_rect)
                     .show(ui, |ui| {
+                        ui.set_style(original_style);
                         egui::Frame::new()
                             .inner_margin(egui::Margin::symmetric(padding.x, padding.y))
                             .show(ui, |ui| {

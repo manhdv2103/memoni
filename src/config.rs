@@ -73,6 +73,8 @@ pub struct ThemeConfig {
     pub foreground: Color,
     pub button_background: Color,
     pub button_active_background: Color,
+    pub scroll_background: Color,
+    pub scroll_handle: Color,
 }
 
 impl Default for ThemeConfig {
@@ -82,6 +84,8 @@ impl Default for ThemeConfig {
             foreground: Color(0xbbbbbb),
             button_background: Color(0x2f2f2f),
             button_active_background: Color(0x454545),
+            scroll_background: Color(0x0a0a0a),
+            scroll_handle: Color(0xbbbbbb),
         }
     }
 }
