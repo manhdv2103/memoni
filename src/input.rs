@@ -41,8 +41,9 @@ impl<'a> Input<'a> {
                     _ => None,
                 };
 
+                let (x, y) = self.window.get_current_win_pos();
                 pointer_button.map(|button| Event::PointerButton {
-                    pos: Pos2::new(ev.event_x as f32, ev.event_y as f32),
+                    pos: Pos2::new((ev.root_x - x) as f32, (ev.root_y - y) as f32),
                     button,
                     pressed,
                     modifiers: *modifiers,
