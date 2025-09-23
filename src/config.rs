@@ -29,6 +29,7 @@ pub struct LayoutConfig {
     pub item_spacing: XY<f32>,
     pub scroll_bar_margin: f32,
     pub pointer_gap: i32,
+    pub screen_edge_gap: i32,
 }
 
 impl Default for LayoutConfig {
@@ -44,6 +45,7 @@ impl Default for LayoutConfig {
             item_spacing: XY { x: 5.0, y: 5.0 },
             scroll_bar_margin: 8.0,
             pointer_gap: 5,
+            screen_edge_gap: 10,
         }
     }
 }

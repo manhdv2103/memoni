@@ -2,7 +2,7 @@ extern crate x11rb;
 
 use std::cell::Cell;
 use std::os::unix::ffi::OsStringExt as _;
-use std::{cmp, ffi::OsString};
+use std::{ffi::OsString};
 use std::{thread, time};
 
 use anyhow::Result;
@@ -251,6 +251,7 @@ impl<'a> X11Window<'a> {
         let LayoutConfig {
             window_dimensions: Dimensions { width, height },
             pointer_gap: spacing,
+            screen_edge_gap,
             ..
         } = config.layout;
         let pointer_pos = win_opened_pointer_pos.get();
@@ -301,18 +302,20 @@ impl<'a> X11Window<'a> {
             .unwrap_or((0, 0, 0, 0));
 
         let place_right = px + width + spacing <= mx + mw - spacing;
-        let x = if place_right {
+        let x = (if place_right {
             px + spacing
         } else {
-            cmp::max(px - width - spacing, spacing)
-        };
+            px - width - spacing
+        })
+        .clamp(mx + screen_edge_gap, mx + mw - width - screen_edge_gap);
 
         let place_below = py + height + spacing <= my + mh - spacing;
-        let y = if place_below {
+        let y = (if place_below {
             py + spacing
         } else {
-            cmp::max(py - height - spacing, spacing)
-        };
+            py - height - spacing
+        })
+        .clamp(my + screen_edge_gap, my + mh - height - screen_edge_gap);
 
         Ok((
             x.clamp(i16::MIN as i32, i16::MAX as i32) as i16,
