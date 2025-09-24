@@ -1,11 +1,14 @@
 use std::{ffi::CString, fs, path::PathBuf, sync::Arc};
 
 use anyhow::{Result, anyhow};
-use egui::{FontData, FontDefinitions, FontFamily, FontTweak, FullOutput, RawInput, Stroke};
+use egui::{
+    FontData, FontDefinitions, FontFamily, FontTweak, FullOutput, RawInput, Stroke,
+    scroll_area::ScrollAreaOutput,
+};
 use fontconfig::Fontconfig;
 
 use crate::{
-    config::{Config, ThemeConfig, XY},
+    config::{Config, LayoutConfig, ThemeConfig},
     selection::SelectionItem,
     utils::is_plaintext_mime,
 };
@@ -14,8 +17,9 @@ pub struct Ui<'a> {
     pub egui_ctx: egui::Context,
     config: &'a Config,
     item_ids: Vec<egui::Id>,
-    hovered_idx: usize,
+    hovered_idx: Option<usize>,
     active_idx: usize,
+    scroll_area_output: Option<ScrollAreaOutput<()>>,
 }
 
 impl<'a> Ui<'a> {
@@ -76,8 +80,9 @@ impl<'a> Ui<'a> {
             egui_ctx,
             config,
             item_ids: vec![],
-            hovered_idx: 0,
+            hovered_idx: None,
             active_idx: 0,
+            scroll_area_output: None,
         })
     }
 
@@ -110,12 +115,14 @@ impl<'a> Ui<'a> {
             }
         }
 
-        let mut run_result: Result<()> = Ok(());
+        let mut run_error = None;
         let corner_radius = self.config.layout.button_corner_radius;
-        let padding = self.config.layout.window_padding;
-        let scroll_bar_margin = self.config.layout.scroll_bar_margin;
+        let layout = &self.config.layout;
         let theme = &self.config.theme;
 
+        let prev_active_idx = self.active_idx;
+        let mut move_by_key = false;
+        let mut pointer_moved = false;
         egui_input.events.retain(|ev| {
             // We will handle key events ourself
             if let egui::Event::Key {
@@ -139,6 +146,7 @@ impl<'a> Ui<'a> {
                         self.active_idx = (self.active_idx as isize + focus_direction)
                             .rem_euclid(self.item_ids.len() as isize)
                             as usize;
+                        move_by_key = true;
                     }
 
                     if matches!(key, egui::Key::Enter | egui::Key::Space)
@@ -150,26 +158,48 @@ impl<'a> Ui<'a> {
                 return false;
             }
 
+            if matches!(ev, egui::Event::PointerMoved(_)) {
+                pointer_moved = true;
+            }
+
             true
         });
 
         let full_output = self.egui_ctx.run(egui_input, |ctx| {
-            let prev_hovered_idx = self.hovered_idx;
-            ctx.viewport(|vp| {
-                if let Some(idx) = self
-                    .item_ids
+            if let Some(current_hovered_idx) = ctx.viewport(|vp| {
+                self.item_ids
                     .iter()
                     .position(|id| vp.interact_widgets.hovered.contains(id))
-                {
-                    self.hovered_idx = idx;
+            }) {
+                if move_by_key {
+                    self.hovered_idx = None;
+                } else if self.hovered_idx.is_some() || pointer_moved {
+                    self.hovered_idx = Some(current_hovered_idx);
+                    self.active_idx = current_hovered_idx;
                 }
-            });
-            if prev_hovered_idx != self.hovered_idx {
-                self.active_idx = self.hovered_idx;
+            }
+
+            let mut next_scroll_offset = None;
+            if prev_active_idx != self.active_idx
+                && let Some(scroll_area) = &self.scroll_area_output
+                && let Some(&active_id) = self.item_ids.get(self.active_idx)
+                && let Some(active_rect) =
+                    ctx.viewport(|vp| vp.prev_pass.widgets.get(active_id).map(|w| w.rect))
+            {
+                let scroll_rect = scroll_area.inner_rect;
+                let scroll_offset = scroll_area.state.offset[1];
+                if !scroll_rect.contains_rect(active_rect) {
+                    let padding = layout.window_padding.y as f32;
+                    next_scroll_offset = Some(if active_rect.top() < scroll_rect.top() + padding {
+                        scroll_offset + active_rect.top() - padding
+                    } else {
+                        scroll_offset + active_rect.bottom() - scroll_rect.height() + padding
+                    });
+                }
             }
 
             self.item_ids.clear();
-            run_result = Self::container(ctx, padding, scroll_bar_margin, theme, |ui| {
+            let container_result = Self::container(ctx, layout, theme, next_scroll_offset, |ui| {
                 if render_items.is_empty() {
                     ui.centered_and_justified(|ui| {
                         ui.add(egui::Label::new("Your clipboard history will appear here."))
@@ -178,8 +208,10 @@ impl<'a> Ui<'a> {
                 }
 
                 for (i, item) in render_items.iter().enumerate() {
+                    let is_active = i == self.active_idx;
+
                     // Focused highlight is too flickery, so we will highlight the button ourself
-                    let btn_fill = if i == self.active_idx {
+                    let btn_fill = if is_active {
                         theme.button_active_background
                     } else {
                         theme.button_background
@@ -201,34 +233,45 @@ impl<'a> Ui<'a> {
 
                 Ok(())
             });
+
+            match container_result {
+                Ok(scroll_area_output) => self.scroll_area_output = Some(scroll_area_output),
+                Err(err) => run_error = Some(err),
+            }
         });
 
-        match run_result {
-            Ok(_) => Ok(full_output),
-            Err(err) => Err(err),
+        match run_error {
+            None => Ok(full_output),
+            Some(err) => Err(err),
         }
     }
 
     pub fn reset(&mut self) {
         self.active_idx = 0;
-        self.hovered_idx = 0;
+        self.hovered_idx = None;
     }
 
     fn container(
         ctx: &egui::Context,
-        padding: XY<i8>,
-        scroll_bar_margin: f32,
+        layout: &LayoutConfig,
         theme: &ThemeConfig,
+        scroll_offset: Option<f32>,
         add_contents: impl FnOnce(&mut egui::Ui) -> Result<()>,
-    ) -> Result<()> {
+    ) -> Result<ScrollAreaOutput<()>> {
+        let LayoutConfig {
+            window_padding: padding,
+            scroll_bar_margin,
+            ..
+        } = layout;
+        let mut scroll_area_output = None;
         let mut err: Option<anyhow::Error> = None;
 
         egui::CentralPanel::default()
             .frame(egui::Frame::new())
             .show(ctx, |ui| {
                 let scroll_bar_rect = egui::Rect::from_min_max(
-                    ui.min_rect().min + egui::vec2(0.0, scroll_bar_margin),
-                    ui.max_rect().max - egui::vec2(0.0, scroll_bar_margin),
+                    ui.min_rect().min + egui::vec2(0.0, *scroll_bar_margin),
+                    ui.max_rect().max - egui::vec2(0.0, *scroll_bar_margin),
                 );
 
                 let original_style = (*ui.ctx().style()).clone();
@@ -243,23 +286,27 @@ impl<'a> Ui<'a> {
                 }
                 ui.set_style(scrollbar_style);
 
-                egui::ScrollArea::vertical()
+                let mut scroll_area = egui::ScrollArea::vertical()
                     .auto_shrink(false)
-                    .scroll_bar_rect(scroll_bar_rect)
-                    .show(ui, |ui| {
-                        ui.set_style(original_style);
-                        egui::Frame::new()
-                            .inner_margin(egui::Margin::symmetric(padding.x, padding.y))
-                            .show(ui, |ui| {
-                                if let Err(e) = add_contents(ui) {
-                                    err = Some(e);
-                                }
-                            });
-                    });
+                    .scroll_bar_rect(scroll_bar_rect);
+                if let Some(offset) = scroll_offset {
+                    scroll_area = scroll_area.scroll_offset(egui::vec2(0.0, offset));
+                }
+
+                scroll_area_output = Some(scroll_area.show(ui, |ui| {
+                    ui.set_style(original_style);
+                    egui::Frame::new()
+                        .inner_margin(egui::Margin::symmetric(padding.x, padding.y))
+                        .show(ui, |ui| {
+                            if let Err(e) = add_contents(ui) {
+                                err = Some(e);
+                            }
+                        });
+                }));
             });
 
         match err {
-            None => Ok(()),
+            None => Ok(scroll_area_output.unwrap()),
             Some(e) => Err(e),
         }
     }
