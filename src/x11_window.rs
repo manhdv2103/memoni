@@ -46,6 +46,7 @@ pub struct X11Window<'a> {
     config: &'a Config,
     win_event_mask: EventMask,
     win_pos: Cell<(i16, i16)>,
+    win_placed_above_pointer: Cell<bool>,
 }
 
 impl<'a> X11Window<'a> {
@@ -139,6 +140,7 @@ impl<'a> X11Window<'a> {
             always_follows_pointer,
             win_pos: Cell::new((0, 0)),
             win_opened_pointer_pos: Cell::new((0, 0)),
+            win_placed_above_pointer: Cell::new(false),
         })
     }
 
@@ -147,12 +149,13 @@ impl<'a> X11Window<'a> {
         self.win_opened_pointer_pos
             .set((pointer.root_x, pointer.root_y));
 
-        let (x, y) = self.calculate_window_pos()?;
+        let (x, y, placed_above_pointer) = self.calculate_window_pos()?;
         self.conn.configure_window(
             self.win_id,
             &ConfigureWindowAux::new().x(x as i32).y(y as i32),
         )?;
         self.win_pos.set((x, y));
+        self.win_placed_above_pointer.set(placed_above_pointer);
 
         Ok(())
     }
@@ -242,7 +245,11 @@ impl<'a> X11Window<'a> {
         self.win_opened_pointer_pos.get()
     }
 
-    fn calculate_window_pos(&self) -> Result<(i16, i16)> {
+    pub fn is_win_placed_above_pointer(&self) -> bool {
+        self.win_placed_above_pointer.get()
+    }
+
+    fn calculate_window_pos(&self) -> Result<(i16, i16, bool)> {
         let X11Window {
             conn,
             screen,
@@ -297,6 +304,7 @@ impl<'a> X11Window<'a> {
             return Ok((
                 x.clamp(i16::MIN as i32, i16::MAX as i32) as i16,
                 y.clamp(i16::MIN as i32, i16::MAX as i32) as i16,
+                false,
             ));
         }
 
@@ -324,6 +332,7 @@ impl<'a> X11Window<'a> {
         Ok((
             x.clamp(i16::MIN as i32, i16::MAX as i32) as i16,
             y.clamp(i16::MIN as i32, i16::MAX as i32) as i16,
+            !place_below,
         ))
     }
 }

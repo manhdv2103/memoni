@@ -13,6 +13,12 @@ use crate::{
     utils::is_plaintext_mime,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UiFlow {
+    TopToBottom,
+    BottomToTop,
+}
+
 pub struct Ui<'a> {
     pub egui_ctx: egui::Context,
     config: &'a Config,
@@ -108,6 +114,7 @@ impl<'a> Ui<'a> {
         &mut self,
         mut egui_input: RawInput,
         selection_items: I,
+        flow: UiFlow,
         mut on_paste: impl FnMut(&SelectionItem),
     ) -> Result<FullOutput> {
         let mut render_items = vec![];
@@ -145,8 +152,9 @@ impl<'a> Ui<'a> {
                         _ => 0,
                     };
                     if focus_direction != 0 {
-                        self.active_idx = (self.active_idx as isize + focus_direction)
-                            .rem_euclid(self.item_ids.len() as isize)
+                        self.active_idx = (self.active_idx as isize
+                            + focus_direction * if flow == UiFlow::BottomToTop { -1 } else { 1 })
+                        .rem_euclid(self.item_ids.len() as isize)
                             as usize;
                         move_by_key = true;
                     }
@@ -181,30 +189,41 @@ impl<'a> Ui<'a> {
                 }
             }
 
-            let mut next_scroll_offset = if self.reset_scroll_next_run {
-                Some(0.0)
-            } else {
-                None
-            };
-            self.reset_scroll_next_run = false;
-
-            if prev_active_idx != self.active_idx
+            let content_overflowed = self
+                .scroll_area_output
+                .as_ref()
+                .map(|s| (s.inner_rect.height() - s.content_size[1]) < 0.0)
+                .unwrap_or(false);
+            let next_scroll_offset = if (prev_active_idx != self.active_idx
+                || self.reset_scroll_next_run)
                 && let Some(scroll_area) = &self.scroll_area_output
                 && let Some(&active_id) = self.item_ids.get(self.active_idx)
                 && let Some(active_rect) =
                     ctx.viewport(|vp| vp.prev_pass.widgets.get(active_id).map(|w| w.rect))
             {
                 let scroll_rect = scroll_area.inner_rect;
+                let scroll_content_size = scroll_area.content_size[1];
                 let scroll_offset = scroll_area.state.offset[1];
-                if !scroll_rect.contains_rect(active_rect) {
-                    let padding = layout.window_padding.y as f32;
-                    next_scroll_offset = Some(if active_rect.top() < scroll_rect.top() + padding {
-                        scroll_offset + active_rect.top() - padding
+
+                if self.reset_scroll_next_run {
+                    if flow == UiFlow::TopToBottom {
+                        Some(0.0)
                     } else {
-                        scroll_offset + active_rect.bottom() - scroll_rect.height() + padding
-                    });
+                        Some(scroll_content_size - scroll_rect.height())
+                    }
+                } else if !scroll_rect.contains_rect(active_rect) {
+                    let padding = layout.window_padding.y as f32;
+                    if active_rect.top() < scroll_rect.top() + padding {
+                        Some(scroll_offset + active_rect.top() - padding)
+                    } else {
+                        Some(scroll_offset + active_rect.bottom() - scroll_rect.height() + padding)
+                    }
+                } else {
+                    None
                 }
-            }
+            } else {
+                None
+            };
 
             self.item_ids.clear();
             let container_result = Self::container(ctx, layout, theme, next_scroll_offset, |ui| {
@@ -215,38 +234,66 @@ impl<'a> Ui<'a> {
                     return Ok(());
                 }
 
-                for (i, item) in render_items.iter().enumerate() {
-                    let is_active = i == self.active_idx;
-
-                    // Focused highlight is too flickery, so we will highlight the button ourself
-                    let btn_fill = if is_active {
-                        theme.button_active_background
+                let layout = if flow == UiFlow::TopToBottom || content_overflowed {
+                    egui::Layout::top_down(egui::Align::default())
+                } else {
+                    egui::Layout::bottom_up(egui::Align::default())
+                };
+                ui.with_layout(layout, |ui| {
+                    let layout_reversed = flow == UiFlow::BottomToTop && content_overflowed;
+                    let item_it: Box<dyn Iterator<Item = _>> = if layout_reversed {
+                        Box::new(render_items.iter().enumerate().rev())
                     } else {
-                        theme.button_background
+                        Box::new(render_items.iter().enumerate())
                     };
+                    for (i, item) in item_it {
+                        let is_active = i == self.active_idx;
 
-                    let btn = ui.add(
-                        egui::Button::new(item.0)
-                            .truncate()
-                            .corner_radius(egui::CornerRadius::same(corner_radius))
-                            .min_size(egui::vec2(ui.available_width(), 0.0))
-                            .fill(btn_fill),
-                    );
-                    self.item_ids.push(btn.id);
+                        // Focused highlight is too flickery, so we will highlight the button ourself
+                        let btn_fill = if is_active {
+                            theme.button_active_background
+                        } else {
+                            theme.button_background
+                        };
 
-                    if btn.clicked() {
-                        on_paste(item.1);
+                        let btn = ui.add(
+                            egui::Button::new(format!("{}. {}", i, item.0))
+                                .truncate()
+                                .corner_radius(egui::CornerRadius::same(corner_radius))
+                                .min_size(egui::vec2(ui.available_width(), 0.0))
+                                .fill(btn_fill),
+                        );
+
+                        if layout_reversed {
+                            self.item_ids.insert(0, btn.id);
+                        } else {
+                            self.item_ids.push(btn.id);
+                        }
+
+                        if btn.clicked() {
+                            on_paste(item.1);
+                        }
                     }
-                }
+                });
 
                 Ok(())
             });
+
+            if flow == UiFlow::BottomToTop && self.reset_scroll_next_run {
+                self.egui_ctx.request_discard(
+                    "BottomToTop flow displays new items at the top of the list. When resetting \
+                     scroll to the bottom, we need to know the height of newly added items beforehand \
+                     to correctly calculate the required scroll offset.",
+                );
+            }
 
             match container_result {
                 Ok(scroll_area_output) => self.scroll_area_output = Some(scroll_area_output),
                 Err(err) => run_error = Some(err),
             }
         });
+
+        self.reset_scroll_next_run = false;
 
         match run_error {
             None => Ok(full_output),

@@ -2,7 +2,7 @@ use anyhow::{Result, bail};
 use memoni::config::Config;
 use memoni::input::Input;
 use memoni::selection::Selection;
-use memoni::ui::Ui;
+use memoni::ui::{Ui, UiFlow};
 use memoni::x11_key_converter::X11KeyConverter;
 use memoni::x11_window::X11Window;
 use memoni::{opengl_context::OpenGLContext, selection::SelectionType};
@@ -266,11 +266,20 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
             }
 
             if window_shown || will_show_window {
-                let full_output =
-                    ui.run(input.egui_input.take(), &selection.items, |selected| {
+                let ui_flow = if window.is_win_placed_above_pointer() {
+                    UiFlow::BottomToTop
+                } else {
+                    UiFlow::TopToBottom
+                };
+                let full_output = ui.run(
+                    input.egui_input.take(),
+                    &selection.items,
+                    ui_flow,
+                    |selected| {
                         will_hide_window = true;
                         paste_item_id = Some(selected.id);
-                    })?;
+                    },
+                )?;
                 gl_context.render(&ui.egui_ctx, full_output)?;
             }
 
