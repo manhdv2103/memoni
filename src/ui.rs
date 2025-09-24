@@ -20,6 +20,7 @@ pub struct Ui<'a> {
     hovered_idx: Option<usize>,
     active_idx: usize,
     scroll_area_output: Option<ScrollAreaOutput<()>>,
+    reset_scroll_next_run: bool,
 }
 
 impl<'a> Ui<'a> {
@@ -83,6 +84,7 @@ impl<'a> Ui<'a> {
             hovered_idx: None,
             active_idx: 0,
             scroll_area_output: None,
+            reset_scroll_next_run: false,
         })
     }
 
@@ -179,7 +181,13 @@ impl<'a> Ui<'a> {
                 }
             }
 
-            let mut next_scroll_offset = None;
+            let mut next_scroll_offset = if self.reset_scroll_next_run {
+                Some(0.0)
+            } else {
+                None
+            };
+            self.reset_scroll_next_run = false;
+
             if prev_active_idx != self.active_idx
                 && let Some(scroll_area) = &self.scroll_area_output
                 && let Some(&active_id) = self.item_ids.get(self.active_idx)
@@ -249,6 +257,7 @@ impl<'a> Ui<'a> {
     pub fn reset(&mut self) {
         self.active_idx = 0;
         self.hovered_idx = None;
+        self.reset_scroll_next_run = true;
     }
 
     fn container(
