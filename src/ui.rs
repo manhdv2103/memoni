@@ -2,7 +2,7 @@ use std::{ffi::CString, fs, path::PathBuf, sync::Arc};
 
 use anyhow::{Result, anyhow};
 use egui::{
-    FontData, FontDefinitions, FontFamily, FontTweak, FullOutput, RawInput, Stroke,
+    Color32, FontData, FontDefinitions, FontFamily, FontTweak, FullOutput, RawInput, Stroke,
     scroll_area::ScrollAreaOutput,
 };
 use fontconfig::Fontconfig;
@@ -26,7 +26,8 @@ pub struct Ui<'a> {
     hovered_idx: Option<usize>,
     active_idx: usize,
     scroll_area_output: Option<ScrollAreaOutput<()>>,
-    reset_scroll_next_run: bool,
+    is_initial_run: bool,
+    shows_scroll_bar: bool,
 }
 
 impl<'a> Ui<'a> {
@@ -90,7 +91,8 @@ impl<'a> Ui<'a> {
             hovered_idx: None,
             active_idx: 0,
             scroll_area_output: None,
-            reset_scroll_next_run: false,
+            is_initial_run: true,
+            shows_scroll_bar: false,
         })
     }
 
@@ -168,8 +170,16 @@ impl<'a> Ui<'a> {
                 return false;
             }
 
-            if matches!(ev, egui::Event::PointerMoved(_)) {
+            if let egui::Event::PointerMoved(pointer_pos) = ev {
                 pointer_moved = true;
+                if self
+                    .scroll_area_output
+                    .as_ref()
+                    .map(|s| s.inner_rect.contains(*pointer_pos))
+                    .unwrap_or(false)
+                {
+                    self.shows_scroll_bar = true;
+                }
             }
 
             true
@@ -195,7 +205,7 @@ impl<'a> Ui<'a> {
                 .map(|s| (s.inner_rect.height() - s.content_size[1]) < 0.0)
                 .unwrap_or(false);
             let next_scroll_offset = if (prev_active_idx != self.active_idx
-                || self.reset_scroll_next_run)
+                || self.is_initial_run)
                 && let Some(scroll_area) = &self.scroll_area_output
                 && let Some(&active_id) = self.item_ids.get(self.active_idx)
                 && let Some(active_rect) =
@@ -205,7 +215,7 @@ impl<'a> Ui<'a> {
                 let scroll_content_size = scroll_area.content_size[1];
                 let scroll_offset = scroll_area.state.offset[1];
 
-                if self.reset_scroll_next_run {
+                if self.is_initial_run {
                     if flow == UiFlow::TopToBottom {
                         Some(0.0)
                     } else {
@@ -226,7 +236,7 @@ impl<'a> Ui<'a> {
             };
 
             self.item_ids.clear();
-            let container_result = Self::container(ctx, layout, theme, next_scroll_offset, |ui| {
+            let container_result = Self::container(ctx, layout, theme, next_scroll_offset, self.shows_scroll_bar, |ui| {
                 if render_items.is_empty() {
                     ui.centered_and_justified(|ui| {
                         ui.add(egui::Label::new("Your clipboard history will appear here."))
@@ -279,7 +289,7 @@ impl<'a> Ui<'a> {
                 Ok(())
             });
 
-            if flow == UiFlow::BottomToTop && self.reset_scroll_next_run {
+            if flow == UiFlow::BottomToTop && self.is_initial_run {
                 self.egui_ctx.request_discard(
                     "BottomToTop flow displays new items at the top of the list. When resetting \
                      scroll to the bottom, we need to know the height of newly added items beforehand \
@@ -293,7 +303,7 @@ impl<'a> Ui<'a> {
             }
         });
 
-        self.reset_scroll_next_run = false;
+        self.is_initial_run = false;
 
         match run_error {
             None => Ok(full_output),
@@ -304,7 +314,8 @@ impl<'a> Ui<'a> {
     pub fn reset(&mut self) {
         self.active_idx = 0;
         self.hovered_idx = None;
-        self.reset_scroll_next_run = true;
+        self.is_initial_run = true;
+        self.shows_scroll_bar = false;
     }
 
     fn container(
@@ -312,6 +323,7 @@ impl<'a> Ui<'a> {
         layout: &LayoutConfig,
         theme: &ThemeConfig,
         scroll_offset: Option<f32>,
+        shows_scroll_bar: bool,
         add_contents: impl FnOnce(&mut egui::Ui) -> Result<()>,
     ) -> Result<ScrollAreaOutput<()>> {
         let LayoutConfig {
@@ -338,8 +350,14 @@ impl<'a> Ui<'a> {
                     &mut scrollbar_style.visuals.widgets.hovered,
                     &mut scrollbar_style.visuals.widgets.active,
                 ] {
-                    widget.fg_stroke.color = theme.scroll_handle.into();
+                    // Cannot use scroll_bar_visibility as the scroll bar has fading animation when hiding
+                    widget.fg_stroke.color = if shows_scroll_bar {
+                        theme.scroll_handle.into()
+                    } else {
+                        Color32::TRANSPARENT
+                    };
                 }
+
                 ui.set_style(scrollbar_style);
 
                 let mut scroll_area = egui::ScrollArea::vertical()
