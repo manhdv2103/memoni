@@ -130,9 +130,15 @@ pub fn plaintext_mime_score(mime: &str) -> Option<usize> {
         "utf8_string",
     ];
 
-    TEXT_MIMES_ORDER.iter().position(|b| mime.eq_ignore_ascii_case(b))
+    TEXT_MIMES_ORDER
+        .iter()
+        .position(|b| mime.eq_ignore_ascii_case(b))
 }
 
 pub fn is_plaintext_mime(mime: &str) -> bool {
     plaintext_mime_score(mime).is_some()
+}
+
+pub fn is_image_mime(mime: &str) -> bool {
+    mime.starts_with("image/")
 }

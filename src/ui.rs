@@ -1,22 +1,34 @@
-use std::{ffi::CString, fs, path::PathBuf, sync::Arc};
+use std::{
+    collections::{HashMap, VecDeque},
+    ffi::CString,
+    fs,
+    path::PathBuf,
+    sync::Arc,
+};
 
 use anyhow::{Result, anyhow};
 use egui::{
-    Color32, FontData, FontDefinitions, FontFamily, FontTweak, FullOutput, RawInput, Stroke,
-    scroll_area::ScrollAreaOutput,
+    AtomExt, Color32, FontData, FontDefinitions, FontFamily, FontTweak, FullOutput, Image,
+    IntoAtoms as _, RawInput, RichText, Stroke, scroll_area::ScrollAreaOutput,
 };
 use fontconfig::Fontconfig;
+use image::RgbaImage;
 
 use crate::{
-    config::{Config, LayoutConfig, ThemeConfig},
+    config::{Config, Dimensions, LayoutConfig},
     selection::SelectionItem,
-    utils::is_plaintext_mime,
+    utils::{is_image_mime, is_plaintext_mime},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UiFlow {
     TopToBottom,
     BottomToTop,
+}
+
+struct ImageInfo {
+    thumbnail: RgbaImage,
+    size: (u32, u32),
 }
 
 pub struct Ui<'a> {
@@ -28,6 +40,7 @@ pub struct Ui<'a> {
     scroll_area_output: Option<ScrollAreaOutput<()>>,
     is_initial_run: bool,
     shows_scroll_bar: bool,
+    img_info_cache: HashMap<u64, ImageInfo>,
 }
 
 impl<'a> Ui<'a> {
@@ -93,6 +106,7 @@ impl<'a> Ui<'a> {
             scroll_area_output: None,
             is_initial_run: true,
             shows_scroll_bar: false,
+            img_info_cache: HashMap::new(),
         })
     }
 
@@ -112,20 +126,13 @@ impl<'a> Ui<'a> {
         Ok(font.and_then(|f| f.filename().map(PathBuf::from)))
     }
 
-    pub fn run<'b, I: IntoIterator<Item = &'b SelectionItem>>(
+    pub fn run(
         &mut self,
         mut egui_input: RawInput,
-        selection_items: I,
+        selection_items: &VecDeque<SelectionItem>,
         flow: UiFlow,
         mut on_paste: impl FnMut(&SelectionItem),
     ) -> Result<FullOutput> {
-        let mut render_items = vec![];
-        for item in selection_items {
-            if let Some((_, value)) = item.data.iter().find(|(k, _)| is_plaintext_mime(k)) {
-                render_items.push((str::from_utf8(value)?, item));
-            }
-        }
-
         let mut run_error = None;
         let corner_radius = self.config.layout.button_corner_radius;
         let layout = &self.config.layout;
@@ -162,9 +169,9 @@ impl<'a> Ui<'a> {
                     }
 
                     if matches!(key, egui::Key::Enter | egui::Key::Space)
-                        && let Some(item) = render_items.get(self.active_idx)
+                        && let Some(item) = selection_items.get(self.active_idx)
                     {
-                        on_paste(item.1);
+                        on_paste(item);
                     }
                 }
                 return false;
@@ -236,55 +243,58 @@ impl<'a> Ui<'a> {
             };
 
             self.item_ids.clear();
-            let container_result = Self::container(ctx, layout, theme, next_scroll_offset, self.shows_scroll_bar, |ui| {
-                if render_items.is_empty() {
+
+            let content_layout = if flow == UiFlow::TopToBottom || content_overflowed {
+                egui::Layout::top_down(egui::Align::default())
+            } else {
+                egui::Layout::bottom_up(egui::Align::default())
+            };
+            let container_result = Self::container(ctx, self.config, content_layout,
+                next_scroll_offset, self.shows_scroll_bar, |ui| {
+
+                if selection_items.is_empty() {
                     ui.centered_and_justified(|ui| {
                         ui.add(egui::Label::new("Your clipboard history will appear here."))
                     });
                     return Ok(());
                 }
 
-                let layout = if flow == UiFlow::TopToBottom || content_overflowed {
-                    egui::Layout::top_down(egui::Align::default())
+                let layout_reversed = flow == UiFlow::BottomToTop && content_overflowed;
+                let item_it: Box<dyn Iterator<Item = _>> = if layout_reversed {
+                    Box::new(selection_items.iter().enumerate().rev())
                 } else {
-                    egui::Layout::bottom_up(egui::Align::default())
+                    Box::new(selection_items.iter().enumerate())
                 };
-                ui.with_layout(layout, |ui| {
-                    let layout_reversed = flow == UiFlow::BottomToTop && content_overflowed;
-                    let item_it: Box<dyn Iterator<Item = _>> = if layout_reversed {
-                        Box::new(render_items.iter().enumerate().rev())
+                for (i, item) in item_it {
+                    let is_active = i == self.active_idx;
+
+                    // Focused highlight is too flickery, so we will highlight the button ourself
+                    let btn_fill = if is_active {
+                        theme.button_active_background
                     } else {
-                        Box::new(render_items.iter().enumerate())
+                        theme.button_background
                     };
-                    for (i, item) in item_it {
-                        let is_active = i == self.active_idx;
 
-                        // Focused highlight is too flickery, so we will highlight the button ourself
-                        let btn_fill = if is_active {
-                            theme.button_active_background
-                        } else {
-                            theme.button_background
-                        };
+                    let item_atoms = Self::render_item(
+                        ctx, self.config, item, &mut self.img_info_cache)?;
+                    let response = egui::Button::new(item_atoms)
+                        .truncate()
+                        .corner_radius(egui::CornerRadius::same(corner_radius))
+                        .min_size(egui::vec2(ui.available_width(), 0.0))
+                        .fill(btn_fill)
+                        .atom_ui(ui);
 
-                        let btn = ui.add(
-                            egui::Button::new(format!("{}. {}", i, item.0))
-                                .truncate()
-                                .corner_radius(egui::CornerRadius::same(corner_radius))
-                                .min_size(egui::vec2(ui.available_width(), 0.0))
-                                .fill(btn_fill),
-                        );
-
-                        if layout_reversed {
-                            self.item_ids.insert(0, btn.id);
-                        } else {
-                            self.item_ids.push(btn.id);
-                        }
-
-                        if btn.clicked() {
-                            on_paste(item.1);
-                        }
+                    let btn = response.response;
+                    if layout_reversed {
+                        self.item_ids.insert(0, btn.id);
+                    } else {
+                        self.item_ids.push(btn.id);
                     }
-                });
+
+                    if btn.clicked() {
+                        on_paste(item);
+                    }
+                }
 
                 Ok(())
             });
@@ -320,8 +330,8 @@ impl<'a> Ui<'a> {
 
     fn container(
         ctx: &egui::Context,
-        layout: &LayoutConfig,
-        theme: &ThemeConfig,
+        config: &Config,
+        content_layout: egui::Layout,
         scroll_offset: Option<f32>,
         shows_scroll_bar: bool,
         add_contents: impl FnOnce(&mut egui::Ui) -> Result<()>,
@@ -330,7 +340,8 @@ impl<'a> Ui<'a> {
             window_padding: padding,
             scroll_bar_margin,
             ..
-        } = layout;
+        } = config.layout;
+        let theme = &config.theme;
         let mut scroll_area_output = None;
         let mut err: Option<anyhow::Error> = None;
 
@@ -338,8 +349,8 @@ impl<'a> Ui<'a> {
             .frame(egui::Frame::new())
             .show(ctx, |ui| {
                 let scroll_bar_rect = egui::Rect::from_min_max(
-                    ui.min_rect().min + egui::vec2(0.0, *scroll_bar_margin),
-                    ui.max_rect().max - egui::vec2(0.0, *scroll_bar_margin),
+                    ui.min_rect().min + egui::vec2(0.0, scroll_bar_margin),
+                    ui.max_rect().max - egui::vec2(0.0, scroll_bar_margin),
                 );
 
                 let original_style = (*ui.ctx().style()).clone();
@@ -372,9 +383,11 @@ impl<'a> Ui<'a> {
                     egui::Frame::new()
                         .inner_margin(egui::Margin::symmetric(padding.x, padding.y))
                         .show(ui, |ui| {
-                            if let Err(e) = add_contents(ui) {
-                                err = Some(e);
-                            }
+                            ui.with_layout(content_layout, |ui| {
+                                if let Err(e) = add_contents(ui) {
+                                    err = Some(e);
+                                }
+                            });
                         });
                 }));
             });
@@ -383,5 +396,82 @@ impl<'a> Ui<'a> {
             None => Ok(scroll_area_output.unwrap()),
             Some(e) => Err(e),
         }
+    }
+
+    fn render_item<'c>(
+        ctx: &egui::Context,
+        config: &Config,
+        item: &'c SelectionItem,
+        img_info_cache: &mut HashMap<u64, ImageInfo>,
+    ) -> Result<egui::Atoms<'a>> {
+        let mut text_content = None;
+        let mut img_info = None;
+        for (mime, data) in &item.data {
+            if is_plaintext_mime(mime) {
+                text_content = Some(str::from_utf8(data)?);
+            } else if is_image_mime(mime) {
+                img_info = Some(img_info_cache.entry(item.id).or_insert_with(|| {
+                    let image = image::load_from_memory(data).unwrap().to_rgba8();
+                    let thumbnail = Self::create_thumbnail(&image, config.layout.preview_size);
+                    ImageInfo { size: image.dimensions(), thumbnail }
+                }));
+            }
+        }
+
+        if let Some(ImageInfo {
+            size,
+            thumbnail: thumb,
+        }) = img_info
+        {
+            let thumb_size = [thumb.width() as usize, thumb.height() as usize];
+            let texture = ctx.load_texture(
+                item.id.to_string(),
+                egui::ColorImage::from_rgba_unmultiplied(
+                    thumb_size,
+                    thumb.as_flat_samples().as_slice(),
+                ),
+                Default::default(),
+            );
+
+            let img_atom = Image::from_texture(&texture).maintain_aspect_ratio(true);
+            return Ok((
+                img_atom,
+                format!("[{}x{}]", size.0, size.1).atom_grow(true),
+            )
+                .into_atoms());
+        } else if let Some(text) = text_content {
+            return Ok(text.into_atoms());
+        }
+
+        Ok(RichText::new("[unknown]")
+            .color(config.theme.muted_foreground)
+            .into_atoms())
+    }
+
+    fn create_thumbnail(image: &RgbaImage, size: Dimensions) -> RgbaImage {
+        let orig_w = image.width() as f32;
+        let orig_h = image.height() as f32;
+        let scale = (size.width as f32 / orig_w).min(size.height as f32 / orig_h);
+        let thumb_w = (orig_w * scale).round() as u32;
+        let thumb_h = (orig_h * scale).round() as u32;
+
+        let scaled = image::imageops::thumbnail(image, thumb_w, thumb_h);
+
+        let mut thumbnail = RgbaImage::from_pixel(
+            size.width.into(),
+            size.height.into(),
+            image::Rgba([0, 0, 0, 0]),
+        );
+        let (w, h) = scaled.dimensions();
+        let x_offset = (size.width as u32 - w) / 2;
+        let y_offset = (size.height as u32 - h) / 2;
+        for y in 0..h {
+            for x in 0..w {
+                let px = scaled.get_pixel(x, y);
+                thumbnail.put_pixel(x + x_offset, y + y_offset, *px);
+            }
+        }
+
+        thumbnail
     }
 }

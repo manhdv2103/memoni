@@ -46,9 +46,11 @@ x11rb::atom_manager! {
     }
 }
 
+type SelectionData = HashMap<String, Vec<u8>>;
+
 pub struct SelectionItem {
     pub id: u64,
-    pub data: HashMap<String, Vec<u8>>,
+    pub data: SelectionData,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -67,7 +69,7 @@ enum TaskState {
     TargetsRequest,
     PendingSelection {
         mimes: HashMap<Atom, String>,
-        data: HashMap<String, Vec<u8>>,
+        data: SelectionData,
     },
 }
 
@@ -393,7 +395,7 @@ impl<'a> Selection<'a> {
 
                 let mut supported_atoms = Vec::new();
                 supported_atoms.push(self.atoms.TARGETS);
-                let mut requested_data: Option<&Vec<u8>> = None;
+                let mut requested_data = None;
                 for (atom_name, data) in &item.data {
                     let atom =
                         get_or_create_mime_atom(self.conn, self.mime_atoms.get_mut(), atom_name)?;
@@ -600,7 +602,7 @@ fn get_window_class(conn: &XCBConnection, window: u32) -> Result<Option<(String,
     Ok(Some((instance_name, class_name)))
 }
 
-fn hash_selection_data(data: &HashMap<String, Vec<u8>>) -> Result<u64> {
+fn hash_selection_data(data: &SelectionData) -> Result<u64> {
     let data_bin = bincode::encode_to_vec(data, BINCODE_CONFIG)?;
     let hash = ahash::RandomState::with_seed(HASH_SEED).hash_one(&data_bin);
 

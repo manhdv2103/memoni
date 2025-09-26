@@ -30,6 +30,7 @@ pub struct LayoutConfig {
     pub scroll_bar_margin: f32,
     pub pointer_gap: i32,
     pub screen_edge_gap: i32,
+    pub preview_size: Dimensions,
 }
 
 impl Default for LayoutConfig {
@@ -46,6 +47,10 @@ impl Default for LayoutConfig {
             scroll_bar_margin: 8.0,
             pointer_gap: 5,
             screen_edge_gap: 10,
+            preview_size: Dimensions {
+                width: 90,
+                height: 60,
+            },
         }
     }
 }
@@ -73,6 +78,7 @@ impl Default for FontConfig {
 pub struct ThemeConfig {
     pub background: Color,
     pub foreground: Color,
+    pub muted_foreground: Color,
     pub button_background: Color,
     pub button_active_background: Color,
     pub scroll_background: Color,
@@ -83,7 +89,8 @@ impl Default for ThemeConfig {
     fn default() -> Self {
         Self {
             background: Color(0x191919),
-            foreground: Color(0xbbbbbb),
+            foreground: Color(0xcccccc),
+            muted_foreground: Color(0x707070),
             button_background: Color(0x2f2f2f),
             button_active_background: Color(0x454545),
             scroll_background: Color(0x0a0a0a),
@@ -175,6 +182,12 @@ pub struct XY<T: Default> {
 pub struct Dimensions {
     pub width: u16,
     pub height: u16,
+}
+
+impl From<Dimensions> for egui::Vec2 {
+    fn from(val: Dimensions) -> Self {
+        egui::vec2(val.width.into(), val.height.into())
+    }
 }
 
 #[derive(Deserialize)]
