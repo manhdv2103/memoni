@@ -8,8 +8,8 @@ use std::{
 
 use anyhow::{Result, anyhow};
 use egui::{
-    AtomExt, Color32, FontData, FontDefinitions, FontFamily, FontTweak, FullOutput, Image,
-    IntoAtoms as _, RawInput, RichText, Stroke, scroll_area::ScrollAreaOutput,
+    Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontTweak, FullOutput, RawInput,
+    RichText, Stroke, scroll_area::ScrollAreaOutput,
 };
 use fontconfig::Fontconfig;
 use image::RgbaImage;
@@ -18,6 +18,7 @@ use crate::{
     config::{Config, Dimensions, LayoutConfig},
     selection::SelectionItem,
     utils::{is_image_mime, is_plaintext_mime},
+    widgets::clipboard_button::ClipboardButton,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,9 +66,11 @@ impl<'a> Ui<'a> {
             ] {
                 widget.fg_stroke.color = theme.foreground.into();
                 widget.weak_bg_fill = theme.button_background.into();
+                widget.corner_radius = CornerRadius::same(layout.button_corner_radius);
                 widget.bg_stroke = Stroke::NONE;
                 widget.expansion = 0.0;
             }
+            style.visuals.widgets.active.weak_bg_fill = theme.button_active_background.into();
 
             if let Some(font_id) = style.text_styles.get_mut(&egui::TextStyle::Body) {
                 *font_id = egui::FontId::proportional(font.size);
@@ -134,9 +137,7 @@ impl<'a> Ui<'a> {
         mut on_paste: impl FnMut(&SelectionItem),
     ) -> Result<FullOutput> {
         let mut run_error = None;
-        let corner_radius = self.config.layout.button_corner_radius;
         let layout = &self.config.layout;
-        let theme = &self.config.theme;
 
         let prev_active_idx = self.active_idx;
         let mut move_by_key = false;
@@ -251,52 +252,38 @@ impl<'a> Ui<'a> {
             let container_result = Self::container(ctx, self.config, next_scroll_offset,
                 self.shows_scroll_bar, |ui| {
 
-                if selection_items.is_empty() {
-                    ui.centered_and_justified(|ui| {
-                        ui.add(egui::Label::new("Your clipboard history will appear here."))
-                    });
-                    return Ok(());
-                }
+                    if selection_items.is_empty() {
+                        ui.centered_and_justified(|ui| {
+                            ui.add(egui::Label::new("Your clipboard history will appear here."))
+                        });
+                        return Ok(());
+                    }
 
-                let layout_reversed = flow == UiFlow::BottomToTop;
-                let item_it: Box<dyn Iterator<Item = _>> = if layout_reversed {
-                    Box::new(selection_items.iter().enumerate().rev())
-                } else {
-                    Box::new(selection_items.iter().enumerate())
-                };
-                for (i, item) in item_it {
-                    let is_active = i == self.active_idx;
-
-                    // Focused highlight is too flickery, so we will highlight the button ourself
-                    let btn_fill = if is_active {
-                        theme.button_active_background
+                    let layout_reversed = flow == UiFlow::BottomToTop;
+                    let item_it: Box<dyn Iterator<Item = _>> = if layout_reversed {
+                        Box::new(selection_items.iter().enumerate().rev())
                     } else {
-                        theme.button_background
+                        Box::new(selection_items.iter().enumerate())
                     };
 
-                    let item_atoms = Self::render_item(
-                        ctx, self.config, item, &mut self.img_info_cache)?;
-                    let response = egui::Button::new(item_atoms)
-                        .truncate()
-                        .corner_radius(egui::CornerRadius::same(corner_radius))
-                        .min_size(egui::vec2(ui.available_width(), 0.0))
-                        .fill(btn_fill)
-                        .atom_ui(ui);
+                    for (i, item) in item_it {
+                        let is_active = i == self.active_idx;
 
-                    let btn = response.response;
-                    if layout_reversed {
-                        self.item_ids.insert(0, btn.id);
-                    } else {
-                        self.item_ids.push(btn.id);
+                        let btn = ui.add(Self::render_item(
+                            ctx, self.config, item, is_active, &mut self.img_info_cache)?);
+                        if layout_reversed {
+                            self.item_ids.insert(0, btn.id);
+                        } else {
+                            self.item_ids.push(btn.id);
+                        }
+
+                        if btn.clicked() {
+                            on_paste(item);
+                        }
                     }
 
-                    if btn.clicked() {
-                        on_paste(item);
-                    }
-                }
-
-                Ok(())
-            });
+                    Ok(())
+                });
 
             if flow == UiFlow::BottomToTop && self.is_initial_run {
                 self.egui_ctx.request_discard(
@@ -394,12 +381,13 @@ impl<'a> Ui<'a> {
         }
     }
 
-    fn render_item<'c>(
+    fn render_item(
         ctx: &egui::Context,
         config: &Config,
-        item: &'c SelectionItem,
+        item: &SelectionItem,
+        is_active: bool,
         img_info_cache: &mut HashMap<u64, ImageInfo>,
-    ) -> Result<egui::Atoms<'a>> {
+    ) -> Result<ClipboardButton> {
         let mut text_content = None;
         let mut img_info = None;
         for (mime, data) in &item.data {
@@ -409,10 +397,17 @@ impl<'a> Ui<'a> {
                 img_info = Some(img_info_cache.entry(item.id).or_insert_with(|| {
                     let image = image::load_from_memory(data).unwrap().to_rgba8();
                     let thumbnail = Self::create_thumbnail(&image, config.layout.preview_size);
-                    ImageInfo { size: image.dimensions(), thumbnail }
+                    ImageInfo {
+                        size: image.dimensions(),
+                        thumbnail,
+                    }
                 }));
             }
         }
+
+        let mut btn =
+            ClipboardButton::new(RichText::new("[unknown]").color(config.theme.muted_foreground))
+                .is_active(is_active);
 
         if let Some(ImageInfo {
             size,
@@ -429,19 +424,14 @@ impl<'a> Ui<'a> {
                 Default::default(),
             );
 
-            let img_atom = Image::from_texture(&texture).maintain_aspect_ratio(true);
-            return Ok((
-                img_atom,
-                format!("[{}x{}]", size.0, size.1).atom_grow(true),
-            )
-                .into_atoms());
+            btn = btn
+                .label(format!("[{}x{}]", size.0, size.1))
+                .image(texture, config.layout.preview_size.into());
         } else if let Some(text) = text_content {
-            return Ok(text.into_atoms());
+            btn = btn.label(text);
         }
 
-        Ok(RichText::new("[unknown]")
-            .color(config.theme.muted_foreground)
-            .into_atoms())
+        Ok(btn)
     }
 
     fn create_thumbnail(image: &RgbaImage, size: Dimensions) -> RgbaImage {

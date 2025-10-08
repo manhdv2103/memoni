@@ -48,8 +48,8 @@ impl Default for LayoutConfig {
             pointer_gap: 5,
             screen_edge_gap: 10,
             preview_size: Dimensions {
-                width: 90,
-                height: 60,
+                width: 105,
+                height: 70,
             },
         }
     }
