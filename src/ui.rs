@@ -211,8 +211,12 @@ impl<'a> Ui<'a> {
                 .as_ref()
                 .map(|s| (s.inner_rect.height() - s.content_size[1]) < 0.0)
                 .unwrap_or(false);
-            let next_scroll_offset = if (prev_active_idx != self.active_idx
-                || self.is_initial_run)
+
+            let set_default_scroll_offset = self.is_initial_run
+                // offset items to the bottom
+                || (flow == UiFlow::BottomToTop && !content_overflowed);
+            let set_active_scroll_offset = prev_active_idx != self.active_idx;
+            let next_scroll_offset = if (set_default_scroll_offset || set_active_scroll_offset)
                 && let Some(scroll_area) = &self.scroll_area_output
                 && let Some(&active_id) = self.item_ids.get(self.active_idx)
                 && let Some(active_rect) =
@@ -222,7 +226,7 @@ impl<'a> Ui<'a> {
                 let scroll_content_size = scroll_area.content_size[1];
                 let scroll_offset = scroll_area.state.offset[1];
 
-                if self.is_initial_run {
+                if set_default_scroll_offset {
                     if flow == UiFlow::TopToBottom {
                         Some(0.0)
                     } else {
@@ -244,13 +248,8 @@ impl<'a> Ui<'a> {
 
             self.item_ids.clear();
 
-            let content_layout = if flow == UiFlow::TopToBottom || content_overflowed {
-                egui::Layout::top_down(egui::Align::default())
-            } else {
-                egui::Layout::bottom_up(egui::Align::default())
-            };
-            let container_result = Self::container(ctx, self.config, content_layout,
-                next_scroll_offset, self.shows_scroll_bar, |ui| {
+            let container_result = Self::container(ctx, self.config, next_scroll_offset,
+                self.shows_scroll_bar, |ui| {
 
                 if selection_items.is_empty() {
                     ui.centered_and_justified(|ui| {
@@ -259,7 +258,7 @@ impl<'a> Ui<'a> {
                     return Ok(());
                 }
 
-                let layout_reversed = flow == UiFlow::BottomToTop && content_overflowed;
+                let layout_reversed = flow == UiFlow::BottomToTop;
                 let item_it: Box<dyn Iterator<Item = _>> = if layout_reversed {
                     Box::new(selection_items.iter().enumerate().rev())
                 } else {
@@ -331,7 +330,6 @@ impl<'a> Ui<'a> {
     fn container(
         ctx: &egui::Context,
         config: &Config,
-        content_layout: egui::Layout,
         scroll_offset: Option<f32>,
         shows_scroll_bar: bool,
         add_contents: impl FnOnce(&mut egui::Ui) -> Result<()>,
@@ -383,11 +381,9 @@ impl<'a> Ui<'a> {
                     egui::Frame::new()
                         .inner_margin(egui::Margin::symmetric(padding.x, padding.y))
                         .show(ui, |ui| {
-                            ui.with_layout(content_layout, |ui| {
-                                if let Err(e) = add_contents(ui) {
-                                    err = Some(e);
-                                }
-                            });
+                            if let Err(e) = add_contents(ui) {
+                                err = Some(e);
+                            }
                         });
                 }));
             });
