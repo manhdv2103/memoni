@@ -445,12 +445,12 @@ impl<'a> Ui<'a> {
 
             if let Some((src, alt)) = img_metadata {
                 if !alt.is_empty() {
-                    btn = btn.label(alt);
+                    btn = btn.label(normalize_string(&alt));
                 }
                 btn = btn.image_source(&src);
             }
         } else if let Some(text) = text_content {
-            btn = btn.label(text);
+            btn = btn.label(normalize_string(text));
         } else {
             btn = btn.label(RichText::new("[unknown]").color(config.theme.muted_foreground));
         }
@@ -491,4 +491,17 @@ fn utf16le_to_string(bytes: &[u8]) -> String {
     let u16_slice: &[u16] =
         unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const u16, bytes.len() / 2) };
     String::from_utf16_lossy(u16_slice)
+}
+
+fn normalize_string(s: &str) -> String {
+    let mut res = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\r' => {}
+            '\n' => res.push('⏎'),
+            _ => res.push(c),
+        }
+    }
+
+    res
 }
