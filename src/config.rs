@@ -25,6 +25,7 @@ pub struct LayoutConfig {
     pub window_dimensions: Dimensions,
     pub window_padding: XY<i8>,
     pub button_padding: XY<f32>,
+    pub button_with_preview_padding: XY<f32>,
     pub button_corner_radius: u8,
     pub item_spacing: XY<f32>,
     pub scroll_bar_margin: f32,
@@ -42,6 +43,7 @@ impl Default for LayoutConfig {
             },
             window_padding: XY { x: 8, y: 8 },
             button_padding: XY { x: 8.0, y: 8.0 },
+            button_with_preview_padding: XY { x: 5.0, y: 5.0 },
             button_corner_radius: 7,
             item_spacing: XY { x: 5.0, y: 5.0 },
             scroll_bar_margin: 8.0,
@@ -60,7 +62,9 @@ impl Default for LayoutConfig {
 pub struct FontConfig {
     pub family: Option<String>,
     pub size: f32,
+    pub secondary_size: f32,
     pub baseline_offset_factor: f32,
+    pub underline_offset: f32,
 }
 
 impl Default for FontConfig {
@@ -68,7 +72,9 @@ impl Default for FontConfig {
         Self {
             family: None,
             size: 13.0,
+            secondary_size: 11.0,
             baseline_offset_factor: 0.0,
+            underline_offset: 0.0,
         }
     }
 }
@@ -176,6 +182,12 @@ impl From<Color> for Color32 {
 pub struct XY<T: Default> {
     pub x: T,
     pub y: T,
+}
+
+impl From<XY<f32>> for egui::Vec2 {
+    fn from(val: XY<f32>) -> Self {
+        egui::vec2(val.x, val.y)
+    }
 }
 
 #[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq)]

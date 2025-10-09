@@ -1,32 +1,41 @@
 use egui::{
-    CornerRadius, Image, Rect, Response, Sense, Stroke, StrokeKind, TextStyle, TextWrapMode,
-    TextureHandle, Ui, Vec2, Widget, WidgetText,
+    CornerRadius, Image, Pos2, Rect, Response, Sense, Stroke,
+    StrokeKind, TextStyle, TextWrapMode, TextureHandle, Ui, Vec2, Widget, WidgetText,
 };
 
+#[derive(Default)]
 pub struct ClipboardButton {
-    label: WidgetText,
+    label: Option<WidgetText>,
+    sublabel: Option<WidgetText>,
     image: Option<(TextureHandle, Vec2)>,
+    image_source: Option<String>,
     is_active: bool,
+    with_preview_padding: Option<Vec2>,
+    underline_offset: f32,
 }
 
 impl ClipboardButton {
-    pub fn new(label: impl Into<WidgetText>) -> Self {
-        Self {
-            label: label.into(),
-            image: None,
-            is_active: false,
-        }
-    }
-
     #[inline]
     pub fn label(mut self, label: impl Into<WidgetText>) -> Self {
-        self.label = label.into();
+        self.label = Some(label.into());
         self
     }
 
     #[inline]
-    pub fn image(mut self, texture: TextureHandle, size: Vec2) -> Self {
-        self.image = Some((texture, size));
+    pub fn sublabel(mut self, sublabel: impl Into<WidgetText>) -> Self {
+        self.sublabel = Some(sublabel.into());
+        self
+    }
+
+    #[inline]
+    pub fn image(mut self, texture: TextureHandle, size: impl Into<Vec2>) -> Self {
+        self.image = Some((texture, size.into()));
+        self
+    }
+
+    #[inline]
+    pub fn image_source(mut self, image_source: &str) -> Self {
+        self.image_source = Some(image_source.to_string());
         self
     }
 
@@ -35,11 +44,29 @@ impl ClipboardButton {
         self.is_active = is_active;
         self
     }
+
+    #[inline]
+    pub fn with_preview_padding(mut self, with_preview_padding: impl Into<Vec2>) -> Self {
+        self.with_preview_padding = Some(with_preview_padding.into());
+        self
+    }
+
+    #[inline]
+    pub fn underline_offset(mut self, underline_offset: f32) -> Self {
+        self.underline_offset = underline_offset;
+        self
+    }
 }
 
 impl Widget for ClipboardButton {
     fn ui(self, ui: &mut Ui) -> Response {
-        let padding = ui.style().spacing.button_padding;
+        let padding = if self.image.is_some()
+            && let Some(with_preview_padding) = self.with_preview_padding
+        {
+            with_preview_padding
+        } else {
+            ui.style().spacing.button_padding
+        };
 
         let desired_width = ui.available_width();
 
@@ -47,15 +74,39 @@ impl Widget for ClipboardButton {
         if let Some((_, img_size)) = self.image {
             text_width -= img_size.x;
         }
-        let galley = self.label.into_galley(
-            ui,
-            Some(TextWrapMode::Truncate),
-            text_width,
-            TextStyle::Button,
-        );
+        let galley = self.label.map(|l| {
+            l.into_galley(
+                ui,
+                Some(TextWrapMode::Truncate),
+                text_width,
+                TextStyle::Button,
+            )
+        });
+        let sublabel_galley = self.sublabel.map(|sl| {
+            sl.into_galley(
+                ui,
+                Some(TextWrapMode::Truncate),
+                text_width,
+                TextStyle::Button,
+            )
+        });
+        let img_src_galley = if self.image.is_some() {
+            self.image_source.as_ref().map(|s| {
+                Into::<WidgetText>::into(s).into_galley(
+                    ui,
+                    Some(TextWrapMode::Truncate),
+                    text_width,
+                    TextStyle::Button,
+                )
+            })
+        } else {
+            None
+        };
 
         let mut desired_height = 0.0;
-        let text_height = galley.size().y;
+        let text_height = galley.as_ref().map(|g| g.size().y).unwrap_or(0.0)
+            + sublabel_galley.as_ref().map(|g| g.size().y).unwrap_or(0.0)
+            + img_src_galley.as_ref().map(|g| g.size().y).unwrap_or(0.0);
         let image_height = self.image.as_ref().map(|i| i.1.y).unwrap_or(0.0);
         desired_height += image_height.max(text_height + padding.y * 2.0);
 
@@ -79,9 +130,9 @@ impl Widget for ClipboardButton {
             );
 
             let mut cursor_x = rect.min.x;
-            if let Some((texture, size)) = self.image {
+            if let Some((ref texture, size)) = self.image {
                 let image_rect = Rect::from_min_size(rect.min, size);
-                let image = Image::from_texture(&texture)
+                let image = Image::from_texture(texture)
                     .maintain_aspect_ratio(true)
                     .corner_radius(CornerRadius {
                         nw: visuals.corner_radius.nw,
@@ -94,12 +145,39 @@ impl Widget for ClipboardButton {
                 cursor_x += image_rect.width();
             }
 
-            let mut text_pos = ui
-                .layout()
-                .align_size_within_rect(galley.size(), rect.shrink2(padding))
-                .min;
-            text_pos.x = cursor_x + padding.x;
-            ui.painter().galley(text_pos, galley, visuals.text_color());
+            cursor_x += padding.x;
+            let mut cursor_y = rect.min.y + padding.y;
+            if let Some(galley) = galley {
+                let text_pos = Pos2::new(cursor_x, cursor_y);
+                cursor_y += galley.size().y;
+                ui.painter().galley(text_pos, galley, visuals.text_color());
+            }
+
+            if let Some(galley) = img_src_galley {
+                let text_pos = Pos2::new(cursor_x, cursor_y);
+                let text_underline = Stroke {
+                    width: 1.0,
+                    color: visuals.text_color(),
+                };
+
+                // Drawing text underline manually with offset to workaround https://github.com/emilk/egui/issues/5855
+                let underline_y =
+                    text_pos.y + galley.size().y - text_underline.width + self.underline_offset;
+                ui.painter().line_segment(
+                    [
+                        Pos2::new(text_pos.x, underline_y),
+                        Pos2::new(text_pos.x + galley.size().x, underline_y),
+                    ],
+                    text_underline,
+                );
+                ui.painter().galley(text_pos, galley, visuals.text_color());
+            }
+
+            if let Some(galley) = sublabel_galley {
+                let text_pos =
+                    Pos2::new(cursor_x, rect.shrink2(padding).bottom() - galley.size().y);
+                ui.painter().galley(text_pos, galley, visuals.text_color());
+            }
         }
 
         response

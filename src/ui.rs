@@ -53,9 +53,8 @@ impl<'a> Ui<'a> {
 
         egui_ctx.style_mut(|style| {
             // style.debug.debug_on_hover = true;
-            style.spacing.button_padding =
-                egui::vec2(layout.button_padding.x, layout.button_padding.y);
-            style.spacing.item_spacing = egui::vec2(layout.item_spacing.x, layout.item_spacing.y);
+            style.spacing.button_padding = layout.button_padding.into();
+            style.spacing.item_spacing = layout.item_spacing.into();
             style.interaction.selectable_labels = false;
 
             style.visuals.override_text_color = Some(theme.foreground.into());
@@ -390,6 +389,7 @@ impl<'a> Ui<'a> {
     ) -> Result<ClipboardButton> {
         let mut text_content = None;
         let mut img_info = None;
+        let mut img_metadata = None;
         for (mime, data) in &item.data {
             if is_plaintext_mime(mime) {
                 text_content = Some(str::from_utf8(data)?);
@@ -402,12 +402,21 @@ impl<'a> Ui<'a> {
                         thumbnail,
                     }
                 }));
+            } else if mime == "text/x-moz-url" {
+                // Firefox encodes data with UTF-16
+                // https://stackoverflow.com/a/51581772
+                let data = utf16le_to_string(data);
+                img_metadata = Some(
+                    data.split_once('\n')
+                        .map(|(s, a)| (s.to_string(), a.to_string()))
+                        .unwrap_or((data, "".to_string())),
+                );
             }
         }
 
-        let mut btn =
-            ClipboardButton::new(RichText::new("[unknown]").color(config.theme.muted_foreground))
-                .is_active(is_active);
+        let mut btn = ClipboardButton::default()
+            .is_active(is_active)
+            .underline_offset(config.font.underline_offset);
 
         if let Some(ImageInfo {
             size,
@@ -425,10 +434,24 @@ impl<'a> Ui<'a> {
             );
 
             btn = btn
-                .label(format!("[{}x{}]", size.0, size.1))
-                .image(texture, config.layout.preview_size.into());
+                .image(texture, config.layout.preview_size)
+                .sublabel(
+                    RichText::new(format!("[{}x{}]", size.0, size.1))
+                        .size(config.font.secondary_size)
+                        .color(config.theme.muted_foreground),
+                )
+                .with_preview_padding(config.layout.button_with_preview_padding);
+
+            if let Some((src, alt)) = img_metadata {
+                if !alt.is_empty() {
+                    btn = btn.label(alt);
+                }
+                btn = btn.image_source(&src);
+            }
         } else if let Some(text) = text_content {
             btn = btn.label(text);
+        } else {
+            btn = btn.label(RichText::new("[unknown]").color(config.theme.muted_foreground));
         }
 
         Ok(btn)
@@ -460,4 +483,11 @@ impl<'a> Ui<'a> {
 
         thumbnail
     }
+}
+
+fn utf16le_to_string(bytes: &[u8]) -> String {
+    assert!(bytes.len() % 2 == 0);
+    let u16_slice: &[u16] =
+        unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const u16, bytes.len() / 2) };
+    String::from_utf16_lossy(u16_slice)
 }
