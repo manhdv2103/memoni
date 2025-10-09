@@ -1,6 +1,6 @@
 use egui::{
-    CornerRadius, Image, Pos2, Rect, Response, Sense, Stroke,
-    StrokeKind, TextStyle, TextWrapMode, TextureHandle, Ui, Vec2, Widget, WidgetText,
+    Color32, CornerRadius, Image, Pos2, Rect, Response, Sense, Stroke, StrokeKind, TextStyle,
+    TextWrapMode, TextureHandle, Ui, Vec2, Widget, WidgetText,
 };
 
 #[derive(Default)]
@@ -9,6 +9,7 @@ pub struct ClipboardButton {
     sublabel: Option<WidgetText>,
     image: Option<(TextureHandle, Vec2)>,
     image_source: Option<String>,
+    image_background: Color32,
     is_active: bool,
     with_preview_padding: Option<Vec2>,
     underline_offset: f32,
@@ -36,6 +37,12 @@ impl ClipboardButton {
     #[inline]
     pub fn image_source(mut self, image_source: &str) -> Self {
         self.image_source = Some(image_source.to_string());
+        self
+    }
+
+    #[inline]
+    pub fn image_background(mut self, image_background: impl Into<Color32>) -> Self {
+        self.image_background = image_background.into();
         self
     }
 
@@ -134,6 +141,7 @@ impl Widget for ClipboardButton {
                 let image_rect = Rect::from_min_size(rect.min, size);
                 let image = Image::from_texture(texture)
                     .maintain_aspect_ratio(true)
+                    .bg_fill(self.image_background)
                     .corner_radius(CornerRadius {
                         nw: visuals.corner_radius.nw,
                         sw: visuals.corner_radius.sw,

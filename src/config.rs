@@ -100,6 +100,8 @@ pub struct ThemeConfig {
     pub scroll_background: Color,
     #[serde_as(as = "DisplayFromStr")]
     pub scroll_handle: Color,
+    #[serde_as(as = "DisplayFromStr")]
+    pub preview_background: Color,
 }
 
 impl Default for ThemeConfig {
@@ -112,6 +114,7 @@ impl Default for ThemeConfig {
             button_active_background: Color(0xff454545),
             scroll_background: Color(0xff0a0a0a),
             scroll_handle: Color(0xffbbbbbb),
+            preview_background: Color(0x77222222),
         }
     }
 }

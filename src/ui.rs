@@ -440,6 +440,7 @@ impl<'a> Ui<'a> {
                         .size(config.font.secondary_size)
                         .color(config.theme.muted_foreground),
                 )
+                .image_background(config.theme.preview_background)
                 .with_preview_padding(config.layout.button_with_preview_padding);
 
             if let Some((src, alt)) = img_metadata {
