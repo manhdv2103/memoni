@@ -30,8 +30,13 @@ pub enum UiFlow {
 struct ImageInfo {
     r#type: String,
     thumbnail: RgbaImage,
-    size: (u32, u32),
+    size: Option<(u32, u32)>,
 }
+
+const PLACEHOLDER_IMG_BYTES: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/placeholder.png"
+));
 
 pub struct Ui<'a> {
     pub egui_ctx: egui::Context,
@@ -43,6 +48,7 @@ pub struct Ui<'a> {
     is_initial_run: bool,
     shows_scroll_bar: bool,
     img_info_cache: HashMap<u64, ImageInfo>,
+    placeholder_img: RgbaImage,
 }
 
 impl<'a> Ui<'a> {
@@ -100,6 +106,10 @@ impl<'a> Ui<'a> {
             }
         }
 
+        let placeholder_img = image::load_from_memory(PLACEHOLDER_IMG_BYTES)
+            .unwrap()
+            .to_rgba8();
+
         Ok(Ui {
             egui_ctx,
             config,
@@ -110,6 +120,7 @@ impl<'a> Ui<'a> {
             is_initial_run: true,
             shows_scroll_bar: false,
             img_info_cache: HashMap::new(),
+            placeholder_img,
         })
     }
 
@@ -269,8 +280,8 @@ impl<'a> Ui<'a> {
                     for (i, item) in item_it {
                         let is_active = i == self.active_idx;
 
-                        let btn = ui.add(Self::render_item(
-                            ctx, self.config, item, is_active, &mut self.img_info_cache)?);
+                        let btn = ui.add(Self::render_item(ctx, self.config, item, is_active,
+                            &mut self.img_info_cache, &self.placeholder_img)?);
                         if layout_reversed {
                             self.item_ids.insert(0, btn.id);
                         } else {
@@ -387,6 +398,7 @@ impl<'a> Ui<'a> {
         item: &SelectionItem,
         is_active: bool,
         img_info_cache: &mut HashMap<u64, ImageInfo>,
+        placeholder_img: &RgbaImage,
     ) -> Result<ClipboardButton> {
         let mut text_content = None;
         let mut img_info = None;
@@ -396,12 +408,26 @@ impl<'a> Ui<'a> {
                 text_content = Some(str::from_utf8(data)?);
             } else if is_image_mime(mime) {
                 img_info = Some(img_info_cache.entry(item.id).or_insert_with(|| {
-                    let image = image::load_from_memory(data).unwrap().to_rgba8();
-                    let thumbnail = Self::create_thumbnail(&image, config.layout.preview_size);
-                    ImageInfo {
-                        r#type: mime.split_once('/').unwrap().1.to_uppercase(),
-                        size: image.dimensions(),
-                        thumbnail,
+                    let img_type = mime.split_once('/').unwrap().1.to_uppercase();
+                    match image::load_from_memory(data) {
+                        Ok(image) => {
+                            let image = image.to_rgba8();
+                            let thumbnail =
+                                Self::create_thumbnail(&image, config.layout.preview_size);
+                            ImageInfo {
+                                r#type: img_type,
+                                size: Some(image.dimensions()),
+                                thumbnail,
+                            }
+                        }
+                        Err(err) => {
+                            eprintln!("error: image with mime {}: {}", mime, err);
+                            ImageInfo {
+                                r#type: img_type,
+                                size: None,
+                                thumbnail: placeholder_img.clone(),
+                            }
+                        }
                     }
                 }));
             } else if mime == "text/x-moz-url" {
@@ -435,11 +461,16 @@ impl<'a> Ui<'a> {
                 ),
                 Default::default(),
             );
+            let sublabel_text = if let Some(size) = size {
+                format!("{} [{}x{}]", r#type, size.0, size.1)
+            } else {
+                format!("{} [?x?]", r#type)
+            };
 
             btn = btn
                 .image(texture, config.layout.preview_size)
                 .sublabel(
-                    RichText::new(format!("{} [{}x{}]", r#type, size.0, size.1))
+                    RichText::new(sublabel_text)
                         .size(config.font.secondary_size)
                         .color(config.theme.muted_foreground),
                 )
