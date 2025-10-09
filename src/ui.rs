@@ -28,6 +28,7 @@ pub enum UiFlow {
 }
 
 struct ImageInfo {
+    r#type: String,
     thumbnail: RgbaImage,
     size: (u32, u32),
 }
@@ -398,6 +399,7 @@ impl<'a> Ui<'a> {
                     let image = image::load_from_memory(data).unwrap().to_rgba8();
                     let thumbnail = Self::create_thumbnail(&image, config.layout.preview_size);
                     ImageInfo {
+                        r#type: mime.split_once('/').unwrap().1.to_uppercase(),
                         size: image.dimensions(),
                         thumbnail,
                     }
@@ -419,6 +421,7 @@ impl<'a> Ui<'a> {
             .underline_offset(config.font.underline_offset);
 
         if let Some(ImageInfo {
+            r#type,
             size,
             thumbnail: thumb,
         }) = img_info
@@ -436,7 +439,7 @@ impl<'a> Ui<'a> {
             btn = btn
                 .image(texture, config.layout.preview_size)
                 .sublabel(
-                    RichText::new(format!("[{}x{}]", size.0, size.1))
+                    RichText::new(format!("{} [{}x{}]", r#type, size.0, size.1))
                         .size(config.font.secondary_size)
                         .color(config.theme.muted_foreground),
                 )
