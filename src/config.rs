@@ -1,11 +1,14 @@
 use anyhow::{Context, Result};
 use egui::Color32;
+use egui::ecolor::ParseHexColorError;
 use serde::Deserialize;
-use serde_with::{FromInto, OneOrMany, serde_as};
+use serde_with::{DisplayFromStr, FromInto, OneOrMany, serde_as};
 use std::collections::HashMap;
+use std::fmt::{self, Display, Formatter};
 use std::fs;
 use std::ops::Deref;
 use std::path::PathBuf;
+use std::str::FromStr;
 use xkeysym::Keysym;
 
 #[serde_as]
@@ -79,28 +82,36 @@ impl Default for FontConfig {
     }
 }
 
+#[serde_as]
 #[derive(Deserialize, Debug)]
 #[serde(default, deny_unknown_fields)]
 pub struct ThemeConfig {
+    #[serde_as(as = "DisplayFromStr")]
     pub background: Color,
+    #[serde_as(as = "DisplayFromStr")]
     pub foreground: Color,
+    #[serde_as(as = "DisplayFromStr")]
     pub muted_foreground: Color,
+    #[serde_as(as = "DisplayFromStr")]
     pub button_background: Color,
+    #[serde_as(as = "DisplayFromStr")]
     pub button_active_background: Color,
+    #[serde_as(as = "DisplayFromStr")]
     pub scroll_background: Color,
+    #[serde_as(as = "DisplayFromStr")]
     pub scroll_handle: Color,
 }
 
 impl Default for ThemeConfig {
     fn default() -> Self {
         Self {
-            background: Color(0x191919),
-            foreground: Color(0xcccccc),
-            muted_foreground: Color(0x707070),
-            button_background: Color(0x2f2f2f),
-            button_active_background: Color(0x454545),
-            scroll_background: Color(0x0a0a0a),
-            scroll_handle: Color(0xbbbbbb),
+            background: Color(0xff191919),
+            foreground: Color(0xffcccccc),
+            muted_foreground: Color(0xff707070),
+            button_background: Color(0xff2f2f2f),
+            button_active_background: Color(0xff454545),
+            scroll_background: Color(0xff0a0a0a),
+            scroll_handle: Color(0xffbbbbbb),
         }
     }
 }
@@ -169,12 +180,45 @@ impl Deref for Color {
     }
 }
 
+impl FromStr for Color {
+    type Err = ParseColorError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Color32::from_hex(value)
+            .map(|c| {
+                Self(
+                    ((c.a() as u32) << 24)
+                        | ((c.r() as u32) << 16)
+                        | ((c.g() as u32) << 8)
+                        | (c.b() as u32),
+                )
+            })
+            .map_err(ParseColorError)
+    }
+}
+
 impl From<Color> for Color32 {
     fn from(value: Color) -> Self {
+        let a = ((*value >> 24) & 0xff) as u8;
         let r = ((*value >> 16) & 0xff) as u8;
         let g = ((*value >> 8) & 0xff) as u8;
         let b = (*value & 0xff) as u8;
-        Color32::from_rgb(r, g, b)
+        Color32::from_rgba_unmultiplied(r, g, b, a)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ParseColorError(ParseHexColorError);
+
+impl Display for ParseColorError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match &self.0 {
+            ParseHexColorError::MissingHash => write!(f, "invalid color: missing hash prefix"),
+            ParseHexColorError::InvalidLength => {
+                write!(f, "invalid color: invalid color string length")
+            }
+            ParseHexColorError::InvalidInt(int_err) => write!(f, "invalid color: {}", int_err),
+        }
     }
 }
 
