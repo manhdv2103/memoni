@@ -5,7 +5,7 @@ use egui::{
 
 #[derive(Default)]
 pub struct ClipboardButton {
-    label: Option<WidgetText>,
+    labels: Vec<WidgetText>,
     sublabel: Option<WidgetText>,
     image: Option<(TextureHandle, Vec2)>,
     image_source: Option<String>,
@@ -18,7 +18,13 @@ pub struct ClipboardButton {
 impl ClipboardButton {
     #[inline]
     pub fn label(mut self, label: impl Into<WidgetText>) -> Self {
-        self.label = Some(label.into());
+        self.labels = vec![label.into()];
+        self
+    }
+
+    #[inline]
+    pub fn append_label(mut self, label: impl Into<WidgetText>) -> Self {
+        self.labels.push(label.into());
         self
     }
 
@@ -81,14 +87,14 @@ impl Widget for ClipboardButton {
         if let Some((_, img_size)) = self.image {
             text_width -= img_size.x;
         }
-        let galley = self.label.map(|l| {
+        let galleys = self.labels.into_iter().map(|l| {
             l.into_galley(
                 ui,
                 Some(TextWrapMode::Truncate),
                 text_width,
                 TextStyle::Button,
             )
-        });
+        }).collect::<Vec<_>>();
         let sublabel_galley = self.sublabel.map(|sl| {
             sl.into_galley(
                 ui,
@@ -111,7 +117,7 @@ impl Widget for ClipboardButton {
         };
 
         let mut desired_height = 0.0;
-        let text_height = galley.as_ref().map(|g| g.size().y).unwrap_or(0.0)
+        let text_height = galleys.iter().fold(0.0, |acc, g| acc + g.size().y)
             + sublabel_galley.as_ref().map(|g| g.size().y).unwrap_or(0.0)
             + img_src_galley.as_ref().map(|g| g.size().y).unwrap_or(0.0);
         let image_height = self.image.as_ref().map(|i| i.1.y).unwrap_or(0.0);
@@ -155,7 +161,7 @@ impl Widget for ClipboardButton {
 
             cursor_x += padding.x;
             let mut cursor_y = rect.min.y + padding.y;
-            if let Some(galley) = galley {
+            for galley in galleys {
                 let text_pos = Pos2::new(cursor_x, cursor_y);
                 cursor_y += galley.size().y;
                 ui.painter().galley(text_pos, galley, visuals.text_color());

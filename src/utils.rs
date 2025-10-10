@@ -142,3 +142,38 @@ pub fn is_plaintext_mime(mime: &str) -> bool {
 pub fn is_image_mime(mime: &str) -> bool {
     mime.starts_with("image/")
 }
+
+pub fn utf16le_to_string(bytes: &[u8]) -> String {
+    assert!(bytes.len() % 2 == 0);
+    let u16_slice: &[u16] =
+        unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const u16, bytes.len() / 2) };
+    String::from_utf16_lossy(u16_slice)
+}
+
+pub fn percent_decode(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '%' {
+            let a = chars.next();
+            let b = chars.next();
+            if let (Some(a), Some(b)) = (a, b)
+                && let Ok(v) = u8::from_str_radix(&format!("{}{}", a, b), 16)
+            {
+                out.push(v as char);
+                continue;
+            }
+
+            out.push('%');
+            if let Some(a) = a {
+                out.push(a);
+            }
+            if let Some(b) = b {
+                out.push(b);
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}

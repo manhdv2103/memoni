@@ -17,7 +17,7 @@ use image::RgbaImage;
 use crate::{
     config::{Config, Dimensions, LayoutConfig},
     selection::SelectionItem,
-    utils::{is_image_mime, is_plaintext_mime},
+    utils::{is_image_mime, is_plaintext_mime, percent_decode, utf16le_to_string},
     widgets::clipboard_button::ClipboardButton,
 };
 
@@ -403,6 +403,7 @@ impl<'a> Ui<'a> {
         let mut text_content = None;
         let mut img_info = None;
         let mut img_metadata = None;
+        let mut files = None;
         for (mime, data) in &item.data {
             if is_plaintext_mime(mime) {
                 text_content = Some(str::from_utf8(data)?);
@@ -439,6 +440,19 @@ impl<'a> Ui<'a> {
                         .map(|(s, a)| (s.to_string(), a.to_string()))
                         .unwrap_or((data, "".to_string())),
                 );
+            } else if mime == "text/uri-list" && files.is_none() {
+                let uris = str::from_utf8(data)?
+                    .lines()
+                    // text/uri-list can contain comment (based on RFC 2483)
+                    .filter(|l| !l.is_empty() && !l.starts_with("#"))
+                    .collect::<Vec<_>>();
+                if uris.len() == uris.iter().filter(|u| u.starts_with("file://")).count() {
+                    files = Some((None, uris));
+                }
+            } else if mime == "x-special/gnome-copied-files" {
+                let mut file_iter = str::from_utf8(data)?.lines();
+                let action = file_iter.next();
+                files = Some((action, file_iter.collect()));
             }
         }
 
@@ -446,7 +460,36 @@ impl<'a> Ui<'a> {
             .is_active(is_active)
             .underline_offset(config.font.underline_offset);
 
-        if let Some(ImageInfo {
+        if let Some((action, files)) = files {
+            let mut file_iter = files.iter();
+            if let Some(file) = file_iter.next() {
+                btn = btn.append_label(percent_decode(&file["file://".len()..]));
+            }
+            if let Some(file) = file_iter.next() {
+                btn = btn.append_label(percent_decode(&file["file://".len()..]));
+            }
+            let more_count = file_iter.count();
+
+            let mut sublabel_text = "".to_owned();
+            if let Some(action) = action {
+                sublabel_text.push_str(action);
+            }
+
+            if more_count > 0 {
+                if !sublabel_text.is_empty() {
+                    sublabel_text.push_str(" | ");
+                }
+                sublabel_text.push_str(&format!("+{} MORE...", more_count));
+            }
+
+            if !sublabel_text.is_empty() {
+                btn = btn.sublabel(
+                    RichText::new(sublabel_text.to_uppercase())
+                        .size(config.font.secondary_size)
+                        .color(config.theme.muted_foreground),
+                )
+            }
+        } else if let Some(ImageInfo {
             r#type,
             size,
             thumbnail: thumb,
@@ -518,13 +561,6 @@ impl<'a> Ui<'a> {
 
         thumbnail
     }
-}
-
-fn utf16le_to_string(bytes: &[u8]) -> String {
-    assert!(bytes.len() % 2 == 0);
-    let u16_slice: &[u16] =
-        unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const u16, bytes.len() / 2) };
-    String::from_utf16_lossy(u16_slice)
 }
 
 fn normalize_string(s: &str) -> String {
