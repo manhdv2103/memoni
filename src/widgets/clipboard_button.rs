@@ -7,9 +7,9 @@ use egui::{
 pub struct ClipboardButton {
     labels: Vec<WidgetText>,
     sublabel: Option<WidgetText>,
-    image: Option<(TextureHandle, Vec2)>,
-    image_source: Option<String>,
-    image_background: Color32,
+    preview: Option<(TextureHandle, Vec2)>,
+    preview_source: Option<String>,
+    preview_background: Color32,
     is_active: bool,
     with_preview_padding: Option<Vec2>,
     underline_offset: f32,
@@ -35,20 +35,20 @@ impl ClipboardButton {
     }
 
     #[inline]
-    pub fn image(mut self, texture: TextureHandle, size: impl Into<Vec2>) -> Self {
-        self.image = Some((texture, size.into()));
+    pub fn preview(mut self, texture: TextureHandle, size: impl Into<Vec2>) -> Self {
+        self.preview = Some((texture, size.into()));
         self
     }
 
     #[inline]
-    pub fn image_source(mut self, image_source: &str) -> Self {
-        self.image_source = Some(image_source.to_string());
+    pub fn preview_source(mut self, preview_source: &str) -> Self {
+        self.preview_source = Some(preview_source.to_string());
         self
     }
 
     #[inline]
-    pub fn image_background(mut self, image_background: impl Into<Color32>) -> Self {
-        self.image_background = image_background.into();
+    pub fn preview_background(mut self, preview_background: impl Into<Color32>) -> Self {
+        self.preview_background = preview_background.into();
         self
     }
 
@@ -73,7 +73,7 @@ impl ClipboardButton {
 
 impl Widget for ClipboardButton {
     fn ui(self, ui: &mut Ui) -> Response {
-        let padding = if self.image.is_some()
+        let padding = if self.preview.is_some()
             && let Some(with_preview_padding) = self.with_preview_padding
         {
             with_preview_padding
@@ -84,7 +84,7 @@ impl Widget for ClipboardButton {
         let desired_width = ui.available_width();
 
         let mut text_width = desired_width - padding.x * 2.0;
-        if let Some((_, img_size)) = self.image {
+        if let Some((_, img_size)) = self.preview {
             text_width -= img_size.x;
         }
         let galleys = self.labels.into_iter().map(|l| {
@@ -103,8 +103,8 @@ impl Widget for ClipboardButton {
                 TextStyle::Button,
             )
         });
-        let img_src_galley = if self.image.is_some() {
-            self.image_source.as_ref().map(|s| {
+        let img_src_galley = if self.preview.is_some() {
+            self.preview_source.as_ref().map(|s| {
                 Into::<WidgetText>::into(s).into_galley(
                     ui,
                     Some(TextWrapMode::Truncate),
@@ -120,8 +120,8 @@ impl Widget for ClipboardButton {
         let text_height = galleys.iter().fold(0.0, |acc, g| acc + g.size().y)
             + sublabel_galley.as_ref().map(|g| g.size().y).unwrap_or(0.0)
             + img_src_galley.as_ref().map(|g| g.size().y).unwrap_or(0.0);
-        let image_height = self.image.as_ref().map(|i| i.1.y).unwrap_or(0.0);
-        desired_height += image_height.max(text_height + padding.y * 2.0);
+        let preview_height = self.preview.as_ref().map(|i| i.1.y).unwrap_or(0.0);
+        desired_height += preview_height.max(text_height + padding.y * 2.0);
 
         let (rect, response) =
             ui.allocate_at_least(Vec2::new(desired_width, desired_height), Sense::CLICK);
@@ -143,20 +143,20 @@ impl Widget for ClipboardButton {
             );
 
             let mut cursor_x = rect.min.x;
-            if let Some((ref texture, size)) = self.image {
-                let image_rect = Rect::from_min_size(rect.min, size);
-                let image = Image::from_texture(texture)
+            if let Some((ref texture, size)) = self.preview {
+                let preview_rect = Rect::from_min_size(rect.min, size);
+                let preview = Image::from_texture(texture)
                     .maintain_aspect_ratio(true)
-                    .bg_fill(self.image_background)
+                    .bg_fill(self.preview_background)
                     .corner_radius(CornerRadius {
                         nw: visuals.corner_radius.nw,
                         sw: visuals.corner_radius.sw,
                         ..Default::default()
                     });
 
-                image.paint_at(ui, image_rect);
+                preview.paint_at(ui, preview_rect);
 
-                cursor_x += image_rect.width();
+                cursor_x += preview_rect.width();
             }
 
             cursor_x += padding.x;

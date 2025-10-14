@@ -2,17 +2,19 @@ use std::{
     collections::{HashMap, VecDeque},
     ffi::CString,
     fs,
-    path::PathBuf,
-    sync::Arc,
+    path::{Path, PathBuf},
+    str::FromStr as _,
+    sync::{Arc, LazyLock},
 };
 
 use anyhow::{Result, anyhow};
 use egui::{
     Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontTweak, FullOutput, RawInput,
-    RichText, Stroke, scroll_area::ScrollAreaOutput,
+    RichText, Stroke, TextureHandle, Vec2, scroll_area::ScrollAreaOutput,
 };
 use fontconfig::Fontconfig;
 use image::RgbaImage;
+use xdg_mime::SharedMimeInfo;
 
 use crate::{
     config::{Config, Dimensions, LayoutConfig},
@@ -33,10 +35,23 @@ struct ImageInfo {
     size: Option<(u32, u32)>,
 }
 
-const PLACEHOLDER_IMG_BYTES: &[u8] = include_bytes!(concat!(
+const FALLBACK_IMG_BYTES: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/assets/placeholder.png"
+    "/assets/fallback_image.png"
 ));
+const FALLBACK_FILE_BYTES: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/fallback_file.png"
+));
+const FALLBACK_DIR_BYTES: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/fallback_directory.png"
+));
+struct Fallback {
+    image: RgbaImage,
+    file: RgbaImage,
+    directory: RgbaImage,
+}
 
 pub struct Ui<'a> {
     pub egui_ctx: egui::Context,
@@ -48,7 +63,7 @@ pub struct Ui<'a> {
     is_initial_run: bool,
     shows_scroll_bar: bool,
     img_info_cache: HashMap<u64, ImageInfo>,
-    placeholder_img: RgbaImage,
+    fallback: Fallback,
 }
 
 impl<'a> Ui<'a> {
@@ -106,9 +121,9 @@ impl<'a> Ui<'a> {
             }
         }
 
-        let placeholder_img = image::load_from_memory(PLACEHOLDER_IMG_BYTES)
-            .unwrap()
-            .to_rgba8();
+        let fallback_img = image::load_from_memory(FALLBACK_IMG_BYTES)?.to_rgba8();
+        let fallback_file = image::load_from_memory(FALLBACK_FILE_BYTES)?.to_rgba8();
+        let fallback_dir = image::load_from_memory(FALLBACK_DIR_BYTES)?.to_rgba8();
 
         Ok(Ui {
             egui_ctx,
@@ -120,7 +135,11 @@ impl<'a> Ui<'a> {
             is_initial_run: true,
             shows_scroll_bar: false,
             img_info_cache: HashMap::new(),
-            placeholder_img,
+            fallback: Fallback {
+                image: fallback_img,
+                file: fallback_file,
+                directory: fallback_dir,
+            },
         })
     }
 
@@ -281,7 +300,7 @@ impl<'a> Ui<'a> {
                         let is_active = i == self.active_idx;
 
                         let btn = ui.add(Self::render_item(ctx, self.config, item, is_active,
-                            &mut self.img_info_cache, &self.placeholder_img)?);
+                            &mut self.img_info_cache, &self.fallback)?);
                         if layout_reversed {
                             self.item_ids.insert(0, btn.id);
                         } else {
@@ -398,7 +417,7 @@ impl<'a> Ui<'a> {
         item: &SelectionItem,
         is_active: bool,
         img_info_cache: &mut HashMap<u64, ImageInfo>,
-        placeholder_img: &RgbaImage,
+        fallback: &Fallback,
     ) -> Result<ClipboardButton> {
         let mut text_content = None;
         let mut img_info = None;
@@ -414,7 +433,7 @@ impl<'a> Ui<'a> {
                         Ok(image) => {
                             let image = image.to_rgba8();
                             let thumbnail =
-                                Self::create_thumbnail(&image, config.layout.preview_size);
+                                create_thumbnail(&image, config.layout.preview_size.into());
                             ImageInfo {
                                 r#type: img_type,
                                 size: Some(image.dimensions()),
@@ -426,7 +445,7 @@ impl<'a> Ui<'a> {
                             ImageInfo {
                                 r#type: img_type,
                                 size: None,
-                                thumbnail: placeholder_img.clone(),
+                                thumbnail: fallback.image.clone(),
                             }
                         }
                     }
@@ -458,15 +477,20 @@ impl<'a> Ui<'a> {
 
         let mut btn = ClipboardButton::default()
             .is_active(is_active)
-            .underline_offset(config.font.underline_offset);
+            .underline_offset(config.font.underline_offset)
+            .with_preview_padding(config.layout.button_with_preview_padding);
 
-        if let Some((action, files)) = files {
-            let mut file_iter = files.iter();
+        if let Some((action, file_uris)) = files {
+            let file_paths = file_uris
+                .iter()
+                .map(|u| percent_decode(&u["file://".len()..]))
+                .collect::<Vec<_>>();
+            let mut file_iter = file_paths.iter();
             if let Some(file) = file_iter.next() {
-                btn = btn.append_label(percent_decode(&file["file://".len()..]));
+                btn = btn.append_label(file);
             }
             if let Some(file) = file_iter.next() {
-                btn = btn.append_label(percent_decode(&file["file://".len()..]));
+                btn = btn.append_label(file);
             }
             let more_count = file_iter.count();
 
@@ -489,21 +513,32 @@ impl<'a> Ui<'a> {
                         .color(config.theme.muted_foreground),
                 )
             }
+
+            let thumbnail = &img_info_cache
+                .entry(item.id)
+                .or_insert_with(|| {
+                    let thumbnail = create_files_thumbnail(
+                        &file_paths,
+                        config.layout.preview_size,
+                        &fallback.file,
+                        &fallback.directory,
+                    );
+                    ImageInfo {
+                        r#type: "".to_string(),
+                        size: None,
+                        thumbnail,
+                    }
+                })
+                .thumbnail;
+            let texture = load_texture(ctx, item.id, thumbnail);
+            btn = btn.preview(texture, config.layout.preview_size);
         } else if let Some(ImageInfo {
             r#type,
             size,
-            thumbnail: thumb,
+            thumbnail,
         }) = img_info
         {
-            let thumb_size = [thumb.width() as usize, thumb.height() as usize];
-            let texture = ctx.load_texture(
-                item.id.to_string(),
-                egui::ColorImage::from_rgba_unmultiplied(
-                    thumb_size,
-                    thumb.as_flat_samples().as_slice(),
-                ),
-                Default::default(),
-            );
+            let texture = load_texture(ctx, item.id, thumbnail);
             let sublabel_text = if let Some(size) = size {
                 format!("{} [{}x{}]", r#type, size.0, size.1)
             } else {
@@ -511,20 +546,19 @@ impl<'a> Ui<'a> {
             };
 
             btn = btn
-                .image(texture, config.layout.preview_size)
+                .preview(texture, config.layout.preview_size)
                 .sublabel(
                     RichText::new(sublabel_text)
                         .size(config.font.secondary_size)
                         .color(config.theme.muted_foreground),
                 )
-                .image_background(config.theme.preview_background)
-                .with_preview_padding(config.layout.button_with_preview_padding);
+                .preview_background(config.theme.preview_background);
 
             if let Some((src, alt)) = img_metadata {
                 if !alt.is_empty() {
                     btn = btn.label(normalize_string(&alt));
                 }
-                btn = btn.image_source(&src);
+                btn = btn.preview_source(&src);
             }
         } else if let Some(text) = text_content {
             btn = btn.label(normalize_string(text));
@@ -534,33 +568,207 @@ impl<'a> Ui<'a> {
 
         Ok(btn)
     }
+}
 
-    fn create_thumbnail(image: &RgbaImage, size: Dimensions) -> RgbaImage {
-        let orig_w = image.width() as f32;
-        let orig_h = image.height() as f32;
-        let scale = (size.width as f32 / orig_w).min(size.height as f32 / orig_h);
-        let thumb_w = (orig_w * scale).round() as u32;
-        let thumb_h = (orig_h * scale).round() as u32;
+fn create_files_thumbnail(
+    files: &[String],
+    size: Dimensions,
+    fallback_file: &RgbaImage,
+    fallback_dir: &RgbaImage,
+) -> RgbaImage {
+    let mut thumbnail = RgbaImage::from_pixel(
+        size.width.into(),
+        size.height.into(),
+        image::Rgba([0, 0, 0, 0]),
+    );
 
-        let scaled = image::imageops::thumbnail(image, thumb_w, thumb_h);
-
-        let mut thumbnail = RgbaImage::from_pixel(
-            size.width.into(),
-            size.height.into(),
-            image::Rgba([0, 0, 0, 0]),
-        );
-        let (w, h) = scaled.dimensions();
-        let x_offset = (size.width as u32 - w) / 2;
-        let y_offset = (size.height as u32 - h) / 2;
-        for y in 0..h {
-            for x in 0..w {
-                let px = scaled.get_pixel(x, y);
-                thumbnail.put_pixel(x + x_offset, y + y_offset, *px);
-            }
-        }
-
-        thumbnail
+    let display_count = files.len().min(4);
+    if display_count == 0 {
+        return thumbnail;
     }
+
+    // relative coordinates of each file icon inside the thumbnail
+    static TEMPLATES: &[&[&[f32; 4]]] = &[
+        &[&[0.1, 0.1, 0.9, 0.9]],
+        &[&[0.1, 0.1, 0.6, 0.6], &[0.4, 0.4, 0.9, 0.9]],
+        &[
+            &[0.1, 0.1, 0.55, 0.55],
+            &[0.45, 0.2, 0.9, 0.65],
+            &[0.225, 0.45, 0.675, 0.9],
+        ],
+        &[
+            &[0.15, 0.1, 0.6, 0.55],
+            &[0.45, 0.15, 0.9, 0.6],
+            &[0.1, 0.4, 0.55, 0.85],
+            &[0.4, 0.45, 0.85, 0.9],
+        ],
+    ];
+    let template = TEMPLATES[display_count - 1];
+
+    for i in 0..display_count {
+        let file = &files[i];
+        let is_dir = PathBuf::from(file).is_dir();
+        let icon_temp = template[i];
+        let coord = &[
+            (icon_temp[0] * size.width as f32).round() as u16,
+            (icon_temp[1] * size.height as f32).round() as u16,
+            (icon_temp[2] * size.width as f32).round() as u16,
+            (icon_temp[3] * size.height as f32).round() as u16,
+        ];
+        let size = Vec2::new((coord[2] - coord[0]).into(), (coord[3] - coord[1]).into());
+
+        let icon = get_file_icon(file, size, is_dir).unwrap_or_else(|e| {
+            eprintln!("error: get file icon: {e}");
+            None
+        });
+        let fallback = if is_dir { fallback_dir } else { fallback_file };
+        let icon = icon.as_ref().unwrap_or(fallback);
+        let scaled_icon = create_thumbnail(icon, size);
+        image::imageops::overlay(
+            &mut thumbnail,
+            &scaled_icon,
+            coord[0].into(),
+            coord[1].into(),
+        );
+    }
+
+    thumbnail
+}
+
+fn get_file_icon<P: AsRef<Path>>(
+    file: P,
+    size_hint: Vec2,
+    is_dir: bool,
+) -> Result<Option<RgbaImage>> {
+    let icon_path = if is_dir {
+        freedesktop_icon::get_icon("folder")
+    } else {
+        get_file_icon_path(file)?
+    };
+
+    if let Some(path) = icon_path
+        && let Some(ext) = path.extension()
+        && (ext == "png" || ext == "svg")
+    {
+        let data = fs::read(&path)?;
+        if ext == "png" {
+            Ok(Some(image::load_from_memory(&data)?.to_rgba8()))
+        } else {
+            Ok(Some(load_svg(&data, size_hint)?.0))
+        }
+    } else {
+        Ok(None)
+    }
+}
+
+fn get_file_icon_path<P: AsRef<Path>>(file: P) -> Result<Option<PathBuf>> {
+    static SMI: LazyLock<SharedMimeInfo> = LazyLock::new(SharedMimeInfo::new);
+
+    let data_mime = SMI
+        .get_mime_type_for_data(&fs::read(&file)?)
+        .map(|(mime, _)| mime);
+    let ext_mime = file
+        .as_ref()
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| SMI.get_mime_types_from_file_name(name).first().cloned());
+
+    let mime = if let Some(data_mime) = data_mime {
+        if let Some(ext_mime) = ext_mime
+            && SMI.mime_type_subclass(&ext_mime, &data_mime)
+        {
+            ext_mime
+        } else {
+            data_mime
+        }
+    } else if let Some(ext_mime) = ext_mime {
+        ext_mime
+    } else {
+        mime::Mime::from_str("application/x-generic")?
+    };
+
+    for icon_name in SMI.lookup_icon_names(&mime) {
+        if let Some(icon) = freedesktop_icon::get_icon(&icon_name) {
+            return Ok(Some(icon));
+        }
+    }
+
+    Ok(None)
+}
+
+fn create_thumbnail(image: &RgbaImage, size: Vec2) -> RgbaImage {
+    let orig_w = image.width() as f32;
+    let orig_h = image.height() as f32;
+    let scale = (size.x / orig_w).min(size.y / orig_h);
+    let thumb_w = (orig_w * scale).round() as u32;
+    let thumb_h = (orig_h * scale).round() as u32;
+
+    let scaled = image::imageops::thumbnail(image, thumb_w, thumb_h);
+
+    let mut thumbnail =
+        RgbaImage::from_pixel(size.x as u32, size.y as u32, image::Rgba([0, 0, 0, 0]));
+    let (w, h) = scaled.dimensions();
+    let x_offset = (size.x as u32 - w) / 2;
+    let y_offset = (size.y as u32 - h) / 2;
+    for y in 0..h {
+        for x in 0..w {
+            let px = scaled.get_pixel(x, y);
+            thumbnail.put_pixel(x + x_offset, y + y_offset, *px);
+        }
+    }
+
+    thumbnail
+}
+
+fn load_texture(ctx: &egui::Context, id: u64, img: &RgbaImage) -> TextureHandle {
+    let thumb_size = [img.width() as usize, img.height() as usize];
+    ctx.load_texture(
+        id.to_string(),
+        egui::ColorImage::from_rgba_unmultiplied(thumb_size, img.as_flat_samples().as_slice()),
+        Default::default(),
+    )
+}
+
+pub fn load_svg(svg_bytes: &[u8], size_hint: Vec2) -> Result<(RgbaImage, Vec2)> {
+    use resvg::{
+        tiny_skia::Pixmap,
+        usvg::{Options, Transform, Tree},
+    };
+
+    let rtree = Tree::from_data(svg_bytes, &Options::default())?;
+    let source_size = Vec2::new(rtree.size().width(), rtree.size().height());
+
+    let mut scaled_size = source_size;
+    scaled_size *= size_hint.x / source_size.x;
+    if scaled_size.y > size_hint.y {
+        scaled_size *= size_hint.y / scaled_size.y;
+    }
+    let scaled_size = scaled_size.round();
+    let (w, h) = (scaled_size.x as u32, scaled_size.y as u32);
+
+    let mut pixmap = Pixmap::new(w, h)
+        .ok_or_else(|| anyhow!(format!("failed to create SVG Pixmap of size {w}x{h}")))?;
+
+    resvg::render(
+        &rtree,
+        Transform::from_scale(w as f32 / source_size.x, h as f32 / source_size.y),
+        &mut pixmap.as_mut(),
+    );
+
+    Ok((
+        RgbaImage::from_raw(
+            w,
+            h,
+            pixmap
+                .pixels()
+                .iter()
+                .map(|p| p.demultiply())
+                .flat_map(|p| [p.red(), p.green(), p.blue(), p.alpha()])
+                .collect(),
+        )
+        .ok_or_else(|| anyhow!("failed to create RgbaImage"))?,
+        scaled_size,
+    ))
 }
 
 fn normalize_string(s: &str) -> String {

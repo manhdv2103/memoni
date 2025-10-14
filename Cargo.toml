@@ -10,12 +10,15 @@ bincode = "2.0.1"
 egui = "0.32.3"
 egui_glow = { version = "0.32.3", default-features = false, features = ["x11"] }
 fontconfig = "0.10.0"
+freedesktop-icon = "0.0.3"
 glow = "0.16.0"
 glutin = { version = "0.32.3", default-features = false, features = ["egl", "x11"] }
 image = { version = "0.25.8", default-features = false, features = ["jpeg", "png", "gif"] }
 lexopt = "0.3.1"
+mime = "0.3.17"
 mio = { version = "1.0.4", features = ["os-poll"] }
 raw-window-handle = "0.6.2"
+resvg = { version = "0.45.1", default-features = false }
 rustix = { version = "0.38.44", default-features = false, features = ["system"] }
 serde = { version = "1.0.223", features = ["derive"] }
 serde_with = "3.14.0"
@@ -23,4 +26,5 @@ signal-hook = "0.3.18"
 signal-hook-mio = { version = "0.2.4", features = ["support-v1_0"] }
 toml = "0.9.5"
 x11rb = { version = "0.13.1", features = ["allow-unsafe-code", "randr", "xfixes", "xtest"] }
+xdg-mime = "0.4.0"
 xkeysym = "0.2.1"
