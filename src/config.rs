@@ -66,7 +66,7 @@ pub struct FontConfig {
     pub family: Option<String>,
     pub size: f32,
     pub secondary_size: f32,
-    pub baseline_offset_factor: f32,
+    pub y_offset_factor: f32,
     pub underline_offset: f32,
 }
 
@@ -76,7 +76,7 @@ impl Default for FontConfig {
             family: None,
             size: 13.0,
             secondary_size: 11.0,
-            baseline_offset_factor: 0.0,
+            y_offset_factor: 0.0,
             underline_offset: 0.0,
         }
     }

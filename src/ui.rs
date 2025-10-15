@@ -105,7 +105,7 @@ impl<'a> Ui<'a> {
                 fonts.font_data.insert(
                     "config_font".to_owned(),
                     Arc::new(FontData::from_owned(fs::read(font_path)?).tweak(FontTweak {
-                        baseline_offset_factor: font.baseline_offset_factor,
+                        y_offset_factor: font.y_offset_factor,
                         ..Default::default()
                     })),
                 );
