@@ -13,7 +13,7 @@ use egui::{
     RichText, Stroke, TextureHandle, Vec2, scroll_area::ScrollAreaOutput,
 };
 use fontconfig::Fontconfig;
-use image::RgbaImage;
+use image::{GenericImageView, RgbaImage};
 use xdg_mime::SharedMimeInfo;
 
 use crate::{
@@ -429,15 +429,22 @@ impl<'a> Ui<'a> {
                 text_content = Some(str::from_utf8(data)?);
             } else if is_image_mime(mime) {
                 img_info = Some(img_info_cache.entry(item.id).or_insert_with(|| {
-                    let img_type = mime.split_once('/').unwrap().1.to_uppercase();
-                    match image::load_from_memory(data) {
-                        Ok(image) => {
-                            let image = image.to_rgba8();
+                    let img_type = mime.split(['/', '+']).nth(1).unwrap_or(mime).to_uppercase();
+                    let img = if img_type == "SVG" {
+                        load_svg(data, config.layout.preview_size.into())
+                    } else {
+                        image::load_from_memory(data)
+                            .map(|i| (i.to_rgba8(), i.dimensions()))
+                            .map_err(anyhow::Error::from)
+                    };
+
+                    match img {
+                        Ok((img, size)) => {
                             let thumbnail =
-                                create_thumbnail(&image, config.layout.preview_size.into());
+                                create_thumbnail(&img, config.layout.preview_size.into());
                             ImageInfo {
                                 r#type: img_type,
-                                size: Some(image.dimensions()),
+                                size: Some(size),
                                 thumbnail,
                             }
                         }
@@ -750,7 +757,7 @@ fn load_texture(ctx: &egui::Context, id: u64, img: &RgbaImage) -> TextureHandle 
     )
 }
 
-pub fn load_svg(svg_bytes: &[u8], size_hint: Vec2) -> Result<(RgbaImage, Vec2)> {
+pub fn load_svg(svg_bytes: &[u8], size_hint: Vec2) -> Result<(RgbaImage, (u32, u32))> {
     use resvg::{
         tiny_skia::Pixmap,
         usvg::{Options, Transform, Tree},
@@ -788,7 +795,7 @@ pub fn load_svg(svg_bytes: &[u8], size_hint: Vec2) -> Result<(RgbaImage, Vec2)> 
                 .collect(),
         )
         .ok_or_else(|| anyhow!("failed to create RgbaImage"))?,
-        scaled_size,
+        (w, h),
     ))
 }
 
