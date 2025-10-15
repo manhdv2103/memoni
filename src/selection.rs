@@ -184,7 +184,7 @@ impl<'a> Selection<'a> {
         })
     }
 
-    pub fn handle_event(&mut self, event: &Event) -> Result<()> {
+    pub fn handle_event(&mut self, event: &Event) -> Result<Option<&SelectionItem>> {
         let conn = self.conn;
         let atoms = self.atoms;
 
@@ -192,17 +192,17 @@ impl<'a> Selection<'a> {
             // Captures copied data
             Event::SelectionNotify(ev) => {
                 if ev.requestor != self.transfer_window {
-                    return Ok(());
+                    return Ok(None);
                 }
 
                 // Conversion request failed
                 let transfer_atom = ev.property;
                 if transfer_atom == x11rb::NONE {
-                    return Ok(());
+                    return Ok(None);
                 }
 
                 let Some(task) = self.tasks.get_mut(&transfer_atom) else {
-                    return Ok(());
+                    return Ok(None);
                 };
 
                 let property = conn.get_property(
@@ -220,12 +220,12 @@ impl<'a> Selection<'a> {
                         let property = property.reply()?;
                         if property.type_ == atoms.INCR {
                             // Ignoring abusive TARGETS property
-                            return Ok(());
+                            return Ok(None);
                         }
 
                         let Some(value) = property.value32() else {
                             // Invalid TARGETS property value format
-                            return Ok(());
+                            return Ok(None);
                         };
 
                         let mut atom_cookies = Vec::new();
@@ -245,7 +245,7 @@ impl<'a> Selection<'a> {
                             atom_cookies.push((conn.get_atom_name(atom)?, atom));
                         }
                         if atom_cookies.is_empty() {
-                            return Ok(());
+                            return Ok(None);
                         }
 
                         let mut mimes = HashMap::new();
@@ -257,7 +257,7 @@ impl<'a> Selection<'a> {
 
                         let mimes = filter_mimes(mimes);
                         if mimes.is_empty() {
-                            return Ok(());
+                            return Ok(None);
                         }
 
                         if let Some(&target_atom) = mimes.keys().next() {
@@ -276,7 +276,7 @@ impl<'a> Selection<'a> {
                             data: HashMap::new(),
                         });
 
-                        Ok(())
+                        Ok(None)
                     }
                     TaskState::PendingSelection {
                         ref mut mimes,
@@ -284,13 +284,13 @@ impl<'a> Selection<'a> {
                     } => {
                         let Some(mime_name) = mimes.remove(&ev.target) else {
                             // Not a pending target
-                            return Ok(());
+                            return Ok(None);
                         };
 
                         let property = property.reply()?;
                         if property.type_ == atoms.INCR {
                             // TODO: Support INCR;
-                            return Ok(());
+                            return Ok(None);
                         }
 
                         // Dropping empty or blank selection
@@ -310,25 +310,26 @@ impl<'a> Selection<'a> {
                                 x11rb::CURRENT_TIME,
                             )?
                             .check()?;
-                        } else {
-                            let (_, task) = self.tasks.remove_entry(&transfer_atom).unwrap();
-                            let TaskState::PendingSelection { data, .. } = task.state else {
-                                unreachable!();
-                            };
-
-                            self.items.push_front(SelectionItem {
-                                id: hash_selection_data(&data)?,
-                                data,
-                            });
+                            return Ok(None);
                         }
 
-                        Ok(())
+                        let (_, task) = self.tasks.remove_entry(&transfer_atom).unwrap();
+                        let TaskState::PendingSelection { data, .. } = task.state else {
+                            unreachable!();
+                        };
+
+                        self.items.push_front(SelectionItem {
+                            id: hash_selection_data(&data)?,
+                            data,
+                        });
+
+                        Ok(self.items.front())
                     }
                 };
             }
             Event::XfixesSelectionNotify(ev) => {
                 if ev.owner == self.paste_window {
-                    return Ok(());
+                    return Ok(None);
                 }
 
                 let transfer_atom = self.transfer_atoms.get()?;
@@ -363,7 +364,7 @@ impl<'a> Selection<'a> {
                         },
                     )?
                     .check()?;
-                    Ok(())
+                    Ok(None)
                 };
 
                 let property = if ev.property == x11rb::NONE {
@@ -439,7 +440,7 @@ impl<'a> Selection<'a> {
 
         self.purge_overdue_tasks();
 
-        Ok(())
+        Ok(None)
     }
 
     fn purge_overdue_tasks(&mut self) {

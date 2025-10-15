@@ -3,7 +3,7 @@ use egui::{
     TextWrapMode, TextureHandle, Ui, Vec2, Widget, WidgetText,
 };
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ClipboardButton {
     labels: Vec<WidgetText>,
     sublabel: Option<WidgetText>,

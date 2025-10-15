@@ -63,7 +63,7 @@ pub struct Ui<'a> {
     scroll_area_output: Option<ScrollAreaOutput<()>>,
     is_initial_run: bool,
     shows_scroll_bar: bool,
-    img_info_cache: HashMap<u64, ImageInfo>,
+    button_widgets: HashMap<u64, ClipboardButton>,
     fallback: Fallback,
 }
 
@@ -135,7 +135,7 @@ impl<'a> Ui<'a> {
             scroll_area_output: None,
             is_initial_run: true,
             shows_scroll_bar: false,
-            img_info_cache: HashMap::new(),
+            button_widgets: HashMap::new(),
             fallback: Fallback {
                 image: fallback_img,
                 file: fallback_file,
@@ -300,8 +300,14 @@ impl<'a> Ui<'a> {
                     for (i, item) in item_it {
                         let is_active = i == self.active_idx;
 
-                        let btn = ui.add(Self::render_item(ctx, self.config, item, is_active,
-                            &mut self.img_info_cache, &self.fallback)?);
+                        let btn = ui.add(
+                            self.button_widgets
+                                .get(&item.id)
+                                .ok_or_else(|| anyhow!("missing button widget for item {}", item.id))?
+                                .clone()
+                                .is_active(is_active)
+                        );
+
                         if layout_reversed {
                             self.item_ids.insert(0, btn.id);
                         } else {
@@ -412,14 +418,14 @@ impl<'a> Ui<'a> {
         }
     }
 
-    fn render_item(
-        ctx: &egui::Context,
-        config: &Config,
-        item: &SelectionItem,
-        is_active: bool,
-        img_info_cache: &mut HashMap<u64, ImageInfo>,
-        fallback: &Fallback,
-    ) -> Result<ClipboardButton> {
+    pub fn build_button_widget(&mut self, item: &SelectionItem) -> Result<()> {
+        let Ui {
+            egui_ctx: ctx,
+            config,
+            fallback,
+            ..
+        } = self;
+
         let mut text_content = None;
         let mut img_info = None;
         let mut img_metadata = None;
@@ -428,36 +434,33 @@ impl<'a> Ui<'a> {
             if is_plaintext_mime(mime) {
                 text_content = Some(str::from_utf8(data)?);
             } else if is_image_mime(mime) {
-                img_info = Some(img_info_cache.entry(item.id).or_insert_with(|| {
-                    let img_type = mime.split(['/', '+']).nth(1).unwrap_or(mime).to_uppercase();
-                    let img = if img_type == "SVG" {
-                        load_svg(data, config.layout.preview_size.into())
-                    } else {
-                        image::load_from_memory(data)
-                            .map(|i| (i.to_rgba8(), i.dimensions()))
-                            .map_err(anyhow::Error::from)
-                    };
+                let img_type = mime.split(['/', '+']).nth(1).unwrap_or(mime).to_uppercase();
+                let img = if img_type == "SVG" {
+                    load_svg(data, config.layout.preview_size.into())
+                } else {
+                    image::load_from_memory(data)
+                        .map(|i| (i.to_rgba8(), i.dimensions()))
+                        .map_err(anyhow::Error::from)
+                };
 
-                    match img {
-                        Ok((img, size)) => {
-                            let thumbnail =
-                                create_thumbnail(&img, config.layout.preview_size.into());
-                            ImageInfo {
-                                r#type: img_type,
-                                size: Some(size),
-                                thumbnail,
-                            }
-                        }
-                        Err(err) => {
-                            eprintln!("error: image with mime {}: {}", mime, err);
-                            ImageInfo {
-                                r#type: img_type,
-                                size: None,
-                                thumbnail: fallback.image.clone(),
-                            }
+                img_info = Some(match img {
+                    Ok((img, size)) => {
+                        let thumbnail = create_thumbnail(&img, config.layout.preview_size.into());
+                        ImageInfo {
+                            r#type: img_type,
+                            size: Some(size),
+                            thumbnail,
                         }
                     }
-                }));
+                    Err(err) => {
+                        eprintln!("error: image with mime {}: {}", mime, err);
+                        ImageInfo {
+                            r#type: img_type,
+                            size: None,
+                            thumbnail: fallback.image.clone(),
+                        }
+                    }
+                });
             } else if mime == "text/x-moz-url" {
                 // Firefox encodes data with UTF-16
                 // https://stackoverflow.com/a/51581772
@@ -484,7 +487,6 @@ impl<'a> Ui<'a> {
         }
 
         let mut btn = ClipboardButton::default()
-            .is_active(is_active)
             .underline_offset(config.font.underline_offset)
             .with_preview_padding(config.layout.button_with_preview_padding);
 
@@ -526,23 +528,13 @@ impl<'a> Ui<'a> {
                 )
             }
 
-            let thumbnail = &img_info_cache
-                .entry(item.id)
-                .or_insert_with(|| {
-                    let thumbnail = create_files_thumbnail(
-                        &file_paths,
-                        config.layout.preview_size,
-                        &fallback.file,
-                        &fallback.directory,
-                    );
-                    ImageInfo {
-                        r#type: "".to_string(),
-                        size: None,
-                        thumbnail,
-                    }
-                })
-                .thumbnail;
-            let texture = load_texture(ctx, item.id, thumbnail);
+            let thumbnail = create_files_thumbnail(
+                &file_paths,
+                config.layout.preview_size,
+                &fallback.file,
+                &fallback.directory,
+            );
+            let texture = load_texture(ctx, item.id, &thumbnail);
             btn = btn.preview(texture, config.layout.preview_size);
         } else if let Some(ImageInfo {
             r#type,
@@ -550,7 +542,7 @@ impl<'a> Ui<'a> {
             thumbnail,
         }) = img_info
         {
-            let texture = load_texture(ctx, item.id, thumbnail);
+            let texture = load_texture(ctx, item.id, &thumbnail);
             let sublabel_text = if let Some(size) = size {
                 format!("{} [{}x{}]", r#type, size.0, size.1)
             } else {
@@ -578,7 +570,8 @@ impl<'a> Ui<'a> {
             btn = btn.label(RichText::new("[unknown]").color(config.theme.muted_foreground));
         }
 
-        Ok(btn)
+        self.button_widgets.insert(item.id, btn);
+        Ok(())
     }
 }
 
@@ -774,8 +767,8 @@ pub fn load_svg(svg_bytes: &[u8], size_hint: Vec2) -> Result<(RgbaImage, (u32, u
     let scaled_size = scaled_size.round();
     let (w, h) = (scaled_size.x as u32, scaled_size.y as u32);
 
-    let mut pixmap = Pixmap::new(w, h)
-        .ok_or_else(|| anyhow!(format!("failed to create SVG Pixmap of size {w}x{h}")))?;
+    let mut pixmap =
+        Pixmap::new(w, h).ok_or_else(|| anyhow!("failed to create SVG Pixmap of size {w}x{h}"))?;
 
     resvg::render(
         &rtree,

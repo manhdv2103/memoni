@@ -248,7 +248,9 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
                 }
 
                 input.handle_event(&event);
-                selection.handle_event(&event)?;
+                if let Some(new_selection_item) = selection.handle_event(&event)? {
+                    ui.build_button_widget(new_selection_item)?;
+                }
 
                 for input_event in &input.egui_input.events {
                     if let egui::Event::Key { key, .. } = input_event
