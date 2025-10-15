@@ -18,6 +18,7 @@ use xdg_mime::SharedMimeInfo;
 
 use crate::{
     config::{Config, Dimensions, LayoutConfig},
+    freedesktop_cache::get_cached_thumbnail,
     selection::SelectionItem,
     utils::{is_image_mime, is_plaintext_mime, percent_decode, utf16le_to_string},
     widgets::clipboard_button::ClipboardButton,
@@ -483,7 +484,11 @@ impl<'a> Ui<'a> {
         if let Some((action, file_uris)) = files {
             let file_paths = file_uris
                 .iter()
-                .map(|u| percent_decode(&u["file://".len()..]))
+                .map(|u| {
+                    str::from_utf8(&percent_decode(&u.as_bytes()["file://".len()..]))
+                        .unwrap()
+                        .to_owned()
+                })
                 .collect::<Vec<_>>();
             let mut file_iter = file_paths.iter();
             if let Some(file) = file_iter.next() {
@@ -587,7 +592,7 @@ fn create_files_thumbnail(
         return thumbnail;
     }
 
-    // relative coordinates of each file icon inside the thumbnail
+    // relative coordinates of each file thumbnail inside the thumbnail
     static TEMPLATES: &[&[&[f32; 4]]] = &[
         &[&[0.1, 0.1, 0.9, 0.9]],
         &[&[0.1, 0.1, 0.6, 0.6], &[0.4, 0.4, 0.9, 0.9]],
@@ -608,25 +613,25 @@ fn create_files_thumbnail(
     for i in 0..display_count {
         let file = &files[i];
         let is_dir = PathBuf::from(file).is_dir();
-        let icon_temp = template[i];
+        let file_thumb_temp = template[i];
         let coord = &[
-            (icon_temp[0] * size.width as f32).round() as u16,
-            (icon_temp[1] * size.height as f32).round() as u16,
-            (icon_temp[2] * size.width as f32).round() as u16,
-            (icon_temp[3] * size.height as f32).round() as u16,
+            (file_thumb_temp[0] * size.width as f32).round() as u16,
+            (file_thumb_temp[1] * size.height as f32).round() as u16,
+            (file_thumb_temp[2] * size.width as f32).round() as u16,
+            (file_thumb_temp[3] * size.height as f32).round() as u16,
         ];
         let size = Vec2::new((coord[2] - coord[0]).into(), (coord[3] - coord[1]).into());
 
-        let icon = get_file_icon(file, size, is_dir).unwrap_or_else(|e| {
-            eprintln!("error: get file icon: {e}");
+        let file_thumb = get_file_thumbnail(file, size, is_dir).unwrap_or_else(|e| {
+            eprintln!("error: get file thumbnail for {}: {e}", file);
             None
         });
         let fallback = if is_dir { fallback_dir } else { fallback_file };
-        let icon = icon.as_ref().unwrap_or(fallback);
-        let scaled_icon = create_thumbnail(icon, size);
+        let file_thumb = file_thumb.as_ref().unwrap_or(fallback);
+        let scaled_file_thumb = create_thumbnail(file_thumb, size);
         image::imageops::overlay(
             &mut thumbnail,
-            &scaled_icon,
+            &scaled_file_thumb,
             coord[0].into(),
             coord[1].into(),
         );
@@ -635,18 +640,34 @@ fn create_files_thumbnail(
     thumbnail
 }
 
-fn get_file_icon<P: AsRef<Path>>(
+fn get_file_thumbnail<P: AsRef<Path>>(
     file: P,
     size_hint: Vec2,
     is_dir: bool,
 ) -> Result<Option<RgbaImage>> {
-    let icon_path = if is_dir {
+    let thumb_path = if is_dir {
         freedesktop_icon::get_icon("folder")
     } else {
-        get_file_icon_path(file)?
+        get_cached_thumbnail(&file)
+            .unwrap_or_else(|e| {
+                eprintln!(
+                    "warning: cannot get cached thumbnail for {}: {e}",
+                    file.as_ref().to_string_lossy(),
+                );
+                None
+            })
+            .or_else(|| {
+                get_file_icon_path(&file).unwrap_or_else(|e| {
+                    eprintln!(
+                        "warning: cannot get icon for {}: {e}",
+                        file.as_ref().to_string_lossy(),
+                    );
+                    None
+                })
+            })
     };
 
-    if let Some(path) = icon_path
+    if let Some(path) = thumb_path
         && let Some(ext) = path.extension()
         && (ext == "png" || ext == "svg")
     {

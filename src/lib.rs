@@ -1,5 +1,6 @@
 pub mod atom_pool;
 pub mod config;
+pub mod freedesktop_cache;
 pub mod input;
 pub mod opengl_context;
 pub mod selection;

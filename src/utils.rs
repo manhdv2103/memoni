@@ -150,30 +150,73 @@ pub fn utf16le_to_string(bytes: &[u8]) -> String {
     String::from_utf16_lossy(u16_slice)
 }
 
-pub fn percent_decode(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut chars = input.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '%' {
-            let a = chars.next();
-            let b = chars.next();
-            if let (Some(a), Some(b)) = (a, b)
-                && let Ok(v) = u8::from_str_radix(&format!("{}{}", a, b), 16)
+pub fn percent_decode(input: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(input.len());
+    let mut bytes = input.iter();
+    while let Some(&b) = bytes.next() {
+        if b == b'%' {
+            let x = bytes.next();
+            let y = bytes.next();
+            if let (Some(&x), Some(&y)) = (x, y)
+                && let Ok(v) = u8::from_str_radix(str::from_utf8(&[x, y]).unwrap(), 16)
             {
-                out.push(v as char);
+                out.push(v);
                 continue;
             }
 
-            out.push('%');
-            if let Some(a) = a {
-                out.push(a);
+            out.push(b'%');
+            if let Some(&x) = x {
+                out.push(x);
             }
-            if let Some(b) = b {
-                out.push(b);
+            if let Some(&y) = y {
+                out.push(y);
             }
         } else {
-            out.push(c);
+            out.push(b);
         }
     }
     out
+}
+
+pub fn percent_encode(input: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(input.len());
+    for b in input {
+        match b {
+            b'A'..=b'Z'
+            | b'a'..=b'z'
+            | b'0'..=b'9'
+            | b'!'
+            | b'$'
+            | b'&'
+            | b'\''
+            | b'('
+            | b')'
+            | b'*'
+            | b'+'
+            | b','
+            | b'-'
+            | b'.'
+            | b':'
+            | b'='
+            | b'@'
+            | b'_'
+            | b'~' => out.push(*b),
+            _ => {
+                out.push(b'%');
+                out.append(&mut format!("{:02X}", b).into_bytes());
+            }
+        }
+    }
+    out
+}
+
+pub fn to_hex_string(bytes: &[u8]) -> String {
+    let hex_chars = b"0123456789abcdef";
+    let mut hex_str = vec!['\0'; bytes.len() * 2];
+    for (i, &b) in bytes.iter().enumerate() {
+        hex_str[i * 2] = hex_chars[(b >> 4) as usize] as char;
+        hex_str[i * 2 + 1] = hex_chars[(b & 0x0f) as usize] as char;
+    }
+
+    hex_str.into_iter().collect::<String>()
 }
