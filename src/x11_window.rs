@@ -7,6 +7,7 @@ use std::{thread, time};
 use anyhow::Result;
 use x11rb::connection::Connection;
 use x11rb::protocol::randr::ConnectionExt as _;
+use x11rb::protocol::xfixes::ConnectionExt as _;
 use x11rb::protocol::xproto::{ConnectionExt as _, *};
 use x11rb::wrapper::ConnectionExt as _;
 use x11rb::xcb_ffi::XCBConnection;
@@ -290,13 +291,16 @@ impl<'a> X11Window<'a> {
             })
         });
 
-        // pointer is in non-focused monitor, display the window in the middle of the focused monitor
+        let pointer_visible = self.pointer_visible()?;
+
+        // The pointer is in non-focused monitor, center the window in the focused monitor.
+        // Or the pointer is hidden, center the window instead of placing it at the pointer to avoid disorienting the user.
         if !always_follows_pointer
             && let Some(fm) = focused_monitor
-            && pointer_monitor
+            && (!pointer_visible || pointer_monitor
                 .as_ref()
                 .map(|pm| fm.name != pm.name)
-                .unwrap_or(true)
+                .unwrap_or(true))
         {
             let x = (fm.width as i32 - width) / 2 + fm.x as i32;
             let y = (fm.height as i32 - height) / 2 + fm.y as i32;
@@ -333,6 +337,14 @@ impl<'a> X11Window<'a> {
             y.clamp(i16::MIN as i32, i16::MAX as i32) as i16,
             !place_below,
         ))
+    }
+
+    fn pointer_visible(&self) -> Result<bool> {
+        let reply = self.conn.xfixes_get_cursor_image()?.reply()?;
+        let pixels = reply.cursor_image;
+        let all_transparent = pixels.iter().all(|&p| (p & 0xff00_0000) == 0);
+
+        Ok(!all_transparent)
     }
 }
 
