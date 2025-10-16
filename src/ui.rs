@@ -183,20 +183,46 @@ impl<'a> Ui<'a> {
             } = ev
             {
                 if *pressed {
-                    let focus_direction = match key {
+                    let focus_step = match key {
                         egui::Key::ArrowUp | egui::Key::K => -1,
                         egui::Key::P if modifiers.ctrl => -1,
                         egui::Key::Tab if modifiers.shift => -1,
                         egui::Key::ArrowDown | egui::Key::J => 1,
                         egui::Key::N if modifiers.ctrl => 1,
                         egui::Key::Tab => 1,
+
+                        // TODO: proper half-page/full-page step (based on window and item sizes)
+                        egui::Key::D if modifiers.ctrl => 5,
+                        egui::Key::U if modifiers.ctrl => -5,
+                        egui::Key::F if modifiers.ctrl => 10,
+                        egui::Key::B if modifiers.ctrl => -10,
                         _ => 0,
-                    };
-                    if focus_direction != 0 {
-                        self.active_idx = (self.active_idx as isize
-                            + focus_direction * if flow == UiFlow::BottomToTop { -1 } else { 1 })
-                        .rem_euclid(self.item_ids.len() as isize)
-                            as usize;
+                    } * if flow == UiFlow::BottomToTop { -1 } else { 1 };
+                    if focus_step != 0 && !self.item_ids.is_empty() {
+                        // Reduce step size to 1 to help reorient user when wrapping while
+                        // doing half-page/full-page scroll
+                        let focus_step = if (self.active_idx == 0 && focus_step < 0)
+                            || (self.active_idx == self.item_ids.len() - 1 && focus_step > 0)
+                        {
+                            if focus_step > 0 { 1 } else { -1 }
+                        } else {
+                            focus_step
+                        };
+
+                        let new_active_idx = self.active_idx as isize + focus_step;
+
+                        // Snap to start/end of the list if overshooting while
+                        // doing half-page/full-page scroll
+                        self.active_idx = if (self.active_idx == 0
+                            && new_active_idx < self.active_idx as isize)
+                            || (self.active_idx == self.item_ids.len() - 1
+                                && new_active_idx > self.active_idx as isize)
+                        {
+                            new_active_idx.rem_euclid(self.item_ids.len() as isize) as usize
+                        } else {
+                            new_active_idx.clamp(0, self.item_ids.len() as isize - 1) as usize
+                        };
+
                         move_by_key = true;
                     }
 
@@ -241,7 +267,7 @@ impl<'a> Ui<'a> {
             let content_overflowed = self
                 .scroll_area_output
                 .as_ref()
-                .map(|s| (s.inner_rect.height() - s.content_size[1]) < 0.0)
+                .map(|s| s.inner_rect.height() < s.content_size[1])
                 .unwrap_or(false);
 
             let set_default_scroll_offset = self.is_initial_run
