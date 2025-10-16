@@ -2,7 +2,7 @@ extern crate x11rb;
 
 use std::{
     cell::Cell,
-    collections::{HashMap, VecDeque},
+    collections::{BTreeMap, HashMap, VecDeque},
     fmt,
     time::{Duration, Instant},
 };
@@ -46,7 +46,7 @@ x11rb::atom_manager! {
     }
 }
 
-type SelectionData = HashMap<String, Vec<u8>>;
+type SelectionData = BTreeMap<String, Vec<u8>>;
 
 pub struct SelectionItem {
     pub id: u64,
@@ -273,7 +273,7 @@ impl<'a> Selection<'a> {
 
                         task.set_state(TaskState::PendingSelection {
                             mimes,
-                            data: HashMap::new(),
+                            data: BTreeMap::new(),
                         });
 
                         Ok(None)
@@ -318,10 +318,14 @@ impl<'a> Selection<'a> {
                             unreachable!();
                         };
 
-                        self.items.push_front(SelectionItem {
+                        let new_item = SelectionItem {
                             id: hash_selection_data(&data)?,
                             data,
-                        });
+                        };
+                        if let Some(idx) = self.items.iter().position(|i| i.id == new_item.id) {
+                            self.items.remove(idx);
+                        }
+                        self.items.push_front(new_item);
 
                         Ok(self.items.front())
                     }
