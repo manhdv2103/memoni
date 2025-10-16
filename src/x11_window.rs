@@ -1,8 +1,7 @@
 extern crate x11rb;
 
 use std::cell::Cell;
-use std::ffi::OsString;
-use std::os::unix::ffi::OsStringExt as _;
+use std::os::unix::ffi::OsStrExt as _;
 use std::{thread, time};
 
 use anyhow::Result;
@@ -124,7 +123,7 @@ impl<'a> X11Window<'a> {
             win_id,
             atoms.WM_CLIENT_MACHINE,
             AtomEnum::STRING,
-            get_hostname().to_string_lossy().as_bytes(),
+            gethostname::gethostname().as_bytes(),
         )?;
         conn.flush()?;
 
@@ -398,8 +397,4 @@ fn get_desktop_viewports(
         .collect::<Vec<_>>();
 
     Ok(viewports)
-}
-
-fn get_hostname() -> OsString {
-    OsString::from_vec(rustix::system::uname().nodename().to_bytes().to_vec())
 }
