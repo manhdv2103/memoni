@@ -1100,6 +1100,7 @@ dependencies = [
  "ahash",
  "anyhow",
  "bincode",
+ "dirs",
  "egui",
  "egui_glow",
  "fontconfig",

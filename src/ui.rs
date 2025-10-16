@@ -499,14 +499,14 @@ impl<'a> Ui<'a> {
                         .to_owned()
                 })
                 .collect::<Vec<_>>();
-            let mut file_iter = file_paths.iter();
-            if let Some(file) = file_iter.next() {
-                btn = btn.append_label(file);
+            let mut path_iter = file_paths.iter();
+            if let Some(file) = path_iter.next() {
+                btn = btn.append_label(format_path_str(file));
             }
-            if let Some(file) = file_iter.next() {
-                btn = btn.append_label(file);
+            if let Some(path) = path_iter.next() {
+                btn = btn.append_label(format_path_str(path));
             }
-            let more_count = file_iter.count();
+            let more_count = path_iter.count();
 
             let mut sublabel_text = "".to_owned();
             if let Some(action) = action {
@@ -612,7 +612,7 @@ fn create_files_thumbnail(
 
     for i in 0..display_count {
         let file = &files[i];
-        let is_dir = PathBuf::from(file).is_dir();
+        let is_dir = Path::new(file).is_dir();
         let file_thumb_temp = template[i];
         let coord = &[
             (file_thumb_temp[0] * size.width as f32).round() as u16,
@@ -803,4 +803,26 @@ fn normalize_string(s: &str) -> String {
     }
 
     res
+}
+
+fn format_path_str(path: &str) -> String {
+    let home = dirs::home_dir();
+    let mut s = String::with_capacity(path.len());
+
+    if let Some(home) = home
+        && let Some(home_str) = home.to_str()
+        && let Some(stripped) = path.strip_prefix(home_str)
+    {
+        s.push('~');
+        s.push_str(stripped);
+    } else {
+        s.push_str(path);
+    }
+
+    let p = Path::new(path);
+    if p.is_dir() && !s.ends_with('/') {
+        s.push('/');
+    }
+
+    s
 }
