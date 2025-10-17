@@ -313,6 +313,7 @@ impl<'a> Selection<'a> {
                             return Ok(None);
                         }
 
+                        self.transfer_atoms.release(transfer_atom);
                         let (_, task) = self.tasks.remove_entry(&transfer_atom).unwrap();
                         let TaskState::PendingSelection { data, .. } = task.state else {
                             unreachable!();
