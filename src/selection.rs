@@ -1,9 +1,9 @@
 extern crate x11rb;
 
 use std::{
-    cell::Cell,
+    cell::RefCell,
     collections::{BTreeMap, HashMap, VecDeque},
-    fmt,
+    fmt, mem,
     time::{Duration, Instant},
 };
 
@@ -22,7 +22,7 @@ use xkeysym::Keysym;
 use crate::{
     atom_pool::AtomPool,
     config::{Binding, Config, Modifier},
-    utils::plaintext_mime_score,
+    utils::{is_plaintext_mime, plaintext_mime_score},
     x11_key_converter::X11KeyConverter,
     x11_window::X11Window,
 };
@@ -32,6 +32,7 @@ use crate::{
 const HASH_SEED: usize = 0xfd9aadcf54cc0f35;
 const BINCODE_CONFIG: bincode::config::Configuration = bincode::config::standard();
 const OVERDUE_TIMEOUT: Duration = Duration::from_secs(3);
+const MAX_INCR_SIZE: usize = 10 * 1024 * 1024;
 
 x11rb::atom_manager! {
     pub Atoms: AtomsCookie {
@@ -43,6 +44,8 @@ x11rb::atom_manager! {
         TARGETS,
         SAVE_TARGETS,
         MULTIPLE,
+
+        _NET_WM_NAME,
     }
 }
 
@@ -71,8 +74,16 @@ enum TaskState {
         mimes: HashMap<Atom, String>,
         data: SelectionData,
     },
+    PendingIncr {
+        mimes: HashMap<Atom, String>,
+        data: SelectionData,
+        current_mime_atom: Atom,
+        current_mime_name: String,
+        buffer: Vec<u8>,
+    },
 }
 
+#[derive(Debug)]
 struct Task {
     state: TaskState,
     last_update: Instant,
@@ -105,7 +116,7 @@ pub struct Selection<'a> {
     transfer_window: u32,
     paste_window: u32,
     transfer_atoms: AtomPool<'a>,
-    mime_atoms: Cell<HashMap<String, Atom>>,
+    mime_atoms: RefCell<HashMap<String, Atom>>,
     paste_item_id: Option<u64>,
 }
 
@@ -179,7 +190,7 @@ impl<'a> Selection<'a> {
             transfer_window,
             paste_window: window.win_id,
             transfer_atoms: AtomPool::new(conn, "SELECTION_DATA")?,
-            mime_atoms: Cell::new(HashMap::new()),
+            mime_atoms: RefCell::new(HashMap::new()),
             paste_item_id: None,
         })
     }
@@ -189,7 +200,7 @@ impl<'a> Selection<'a> {
         let atoms = self.atoms;
 
         match event {
-            // Captures copied data
+            // Capture copied data
             Event::SelectionNotify(ev) => {
                 if ev.requestor != self.transfer_window {
                     return Ok(None);
@@ -289,46 +300,29 @@ impl<'a> Selection<'a> {
 
                         let property = property.reply()?;
                         if property.type_ == atoms.INCR {
-                            // TODO: Support INCR;
+                            let mimes = mem::take(mimes);
+                            let data = mem::take(data);
+
+                            task.set_state(TaskState::PendingIncr {
+                                mimes,
+                                data,
+                                current_mime_atom: ev.target,
+                                current_mime_name: mime_name,
+                                buffer: Vec::new(),
+                            });
+
                             return Ok(None);
                         }
 
-                        // Dropping empty or blank selection
-                        if !(property.value.is_empty()
-                            || property.value.iter().all(u8::is_ascii_whitespace))
-                        {
-                            data.insert(mime_name.clone(), property.value);
-                            self.mime_atoms.get_mut().insert(mime_name, ev.target);
-                        }
-
-                        if let Some(&atom) = mimes.keys().next() {
-                            conn.convert_selection(
-                                self.transfer_window,
-                                ev.selection,
-                                atom,
-                                transfer_atom,
-                                x11rb::CURRENT_TIME,
-                            )?
-                            .check()?;
-                            return Ok(None);
-                        }
-
-                        self.transfer_atoms.release(transfer_atom);
-                        let (_, task) = self.tasks.remove_entry(&transfer_atom).unwrap();
-                        let TaskState::PendingSelection { data, .. } = task.state else {
-                            unreachable!();
-                        };
-
-                        let new_item = SelectionItem {
-                            id: hash_selection_data(&data)?,
-                            data,
-                        };
-                        if let Some(idx) = self.items.iter().position(|i| i.id == new_item.id) {
-                            self.items.remove(idx);
-                        }
-                        self.items.push_front(new_item);
-
-                        Ok(self.items.front())
+                        self.process_selection_data(
+                            transfer_atom,
+                            property.value,
+                            mime_name,
+                            ev.target,
+                        )
+                    }
+                    TaskState::PendingIncr { .. } => {
+                        unreachable!("PendingIncr should only be handled in PropertyNotify");
                     }
                 };
             }
@@ -351,7 +345,92 @@ impl<'a> Selection<'a> {
                     .insert(transfer_atom, Task::new(TaskState::TargetsRequest));
             }
 
-            // Handles paste requests
+            // Handle receiving INCR selection
+            Event::PropertyNotify(ev) => {
+                if ev.atom == self.atoms._NET_WM_NAME {
+                    // Ignoring window name property change.
+                    return Ok(None);
+                }
+
+                if ev.state != Property::NEW_VALUE {
+                    // Ignoring irrelevant property state change
+                    return Ok(None);
+                }
+
+                if ev.window != self.transfer_window {
+                    return Ok(None);
+                }
+
+                let transfer_atom = ev.atom;
+                let Some(task) = self.tasks.get_mut(&transfer_atom) else {
+                    return Ok(None);
+                };
+
+                let incr_task_state = if let TaskState::PendingIncr {
+                    mimes,
+                    data,
+                    current_mime_atom,
+                    current_mime_name,
+                    buffer,
+                } = &mut task.state
+                {
+                    Some((
+                        mem::take(mimes),
+                        mem::take(data),
+                        mem::take(buffer),
+                        mem::take(current_mime_name),
+                        *current_mime_atom,
+                    ))
+                } else {
+                    None
+                };
+
+                if let Some((mimes, data, mut buffer, current_mime_name, current_mime_atom)) =
+                    incr_task_state
+                {
+                    let property = conn.get_property(
+                        true,
+                        ev.window,
+                        ev.atom,
+                        GetPropertyType::ANY,
+                        0,
+                        u32::MAX,
+                    )?;
+                    conn.flush()?;
+
+                    let property = property.reply()?;
+
+                    // Empty property signals completion
+                    if property.value.is_empty() {
+                        self.conn.delete_property(ev.window, transfer_atom)?;
+                        task.state = TaskState::PendingSelection { mimes, data };
+
+                        return self.process_selection_data(
+                            transfer_atom,
+                            buffer,
+                            current_mime_name,
+                            current_mime_atom,
+                        );
+                    }
+
+                    if buffer.len() + property.value.len() > MAX_INCR_SIZE {
+                        eprintln!("Warning: INCR transfer exceeds size limit, aborting");
+                        self.tasks.remove(&transfer_atom);
+                        return Ok(None);
+                    }
+
+                    buffer.extend_from_slice(&property.value);
+                    task.state = TaskState::PendingIncr {
+                        mimes,
+                        data,
+                        buffer,
+                        current_mime_name,
+                        current_mime_atom,
+                    };
+                }
+            }
+
+            // Handle paste request
             Event::SelectionRequest(ev) => {
                 let reply = |property| {
                     conn.send_event(
@@ -446,6 +525,62 @@ impl<'a> Selection<'a> {
         self.purge_overdue_tasks();
 
         Ok(None)
+    }
+
+    fn process_selection_data(
+        &mut self,
+        transfer_atom: Atom,
+        value: Vec<u8>,
+        mime_name: String,
+        mime_atom: Atom,
+    ) -> Result<Option<&SelectionItem>> {
+        let mut task = self.tasks.remove(&transfer_atom).unwrap();
+
+        let TaskState::PendingSelection {
+            ref mut data,
+            ref mimes,
+        } = task.state
+        else {
+            panic!(
+                "Expected task.state of transfer_atom {transfer_atom} to be PendingSelection, but was {:?}",
+                task.state
+            );
+        };
+
+        // Dropping empty or blank selection
+        if !(value.is_empty()
+            || (is_plaintext_mime(&mime_name) && value.iter().all(u8::is_ascii_whitespace)))
+        {
+            data.insert(mime_name.clone(), value);
+            self.mime_atoms.borrow_mut().insert(mime_name, mime_atom);
+        }
+
+        if let Some(&next_atom) = mimes.keys().next() {
+            self.tasks.insert(transfer_atom, task);
+            self.conn
+                .convert_selection(
+                    self.transfer_window,
+                    self.selection_atom,
+                    next_atom,
+                    transfer_atom,
+                    x11rb::CURRENT_TIME,
+                )?
+                .check()?;
+            return Ok(None);
+        }
+
+        self.transfer_atoms.release(transfer_atom);
+
+        let new_item_id = hash_selection_data(data)?;
+        if let Some(idx) = self.items.iter().position(|i| i.id == new_item_id) {
+            self.items.remove(idx);
+        }
+        self.items.push_front(SelectionItem {
+            id: new_item_id,
+            data: mem::take(data),
+        });
+
+        Ok(self.items.front())
     }
 
     fn purge_overdue_tasks(&mut self) {
