@@ -9,6 +9,9 @@ use memoni::{opengl_context::OpenGLContext, selection::SelectionType};
 use mio::{net::UnixListener, unix::SourceFd};
 use signal_hook::consts::TERM_SIGNALS;
 use signal_hook_mio::v1_0::Signals;
+use std::cell::RefCell;
+use std::mem;
+use std::rc::Rc;
 use std::{
     ffi::OsStr,
     fs, io,
@@ -22,6 +25,7 @@ use std::{
 };
 use x11rb::connection::Connection;
 use x11rb::protocol::Event;
+use x11rb::protocol::xproto::Mapping;
 use x11rb::xcb_ffi::XCBConnection;
 
 const SOCKET_DIR: &str = "/tmp/memoni/";
@@ -146,9 +150,14 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
 
     let window = X11Window::new(&config, args.selection == SelectionType::PRIMARY)?;
     let mut gl_context = unsafe { OpenGLContext::new(&window, &config)? };
-    let key_converter = X11KeyConverter::new(&window.conn)?;
-    let mut input = Input::new(&window, &key_converter)?;
-    let mut selection = Selection::new(&window, &key_converter, args.selection.clone(), &config)?;
+    let key_converter = Rc::new(RefCell::new(X11KeyConverter::new(&window.conn)?));
+    let mut input = Input::new(&window, key_converter.clone())?;
+    let mut selection = Selection::new(
+        &window,
+        key_converter.clone(),
+        args.selection.clone(),
+        &config,
+    )?;
     let mut ui = Ui::new(&config)?;
 
     let mut signals = Signals::new(TERM_SIGNALS)?;
@@ -230,6 +239,15 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
                 if let Event::DestroyNotify(_) = event {
                     will_hide_window = true;
                     continue;
+                }
+
+                if let Event::MappingNotify(ev) = event
+                    && (ev.request == Mapping::KEYBOARD || ev.request == Mapping::MODIFIER)
+                {
+                    let _ = mem::replace(
+                        &mut *key_converter.borrow_mut(),
+                        X11KeyConverter::new(&window.conn)?,
+                    );
                 }
 
                 if let Event::ButtonPress(_) = event {

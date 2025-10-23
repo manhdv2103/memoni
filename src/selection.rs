@@ -4,6 +4,7 @@ use std::{
     cell::RefCell,
     collections::{BTreeMap, HashMap, VecDeque},
     fmt, mem,
+    rc::Rc,
     time::{Duration, Instant},
 };
 
@@ -119,7 +120,7 @@ pub struct Selection<'a> {
 
     conn: &'a XCBConnection,
     screen: &'a Screen,
-    key_converter: &'a X11KeyConverter,
+    key_converter: Rc<RefCell<X11KeyConverter>>,
     config: &'a Config,
     selection_atom: Atom,
     atoms: Atoms,
@@ -135,7 +136,7 @@ pub struct Selection<'a> {
 impl<'a> Selection<'a> {
     pub fn new(
         window: &'a X11Window,
-        key_converter: &'a X11KeyConverter,
+        key_converter: Rc<RefCell<X11KeyConverter>>,
         selection_type: SelectionType,
         config: &'a Config,
     ) -> Result<Self> {
@@ -743,6 +744,7 @@ impl<'a> Selection<'a> {
         };
         let keycode = |keysym| {
             self.key_converter
+                .borrow()
                 .keysym_to_keycode(keysym)
                 .map(|kc| kc.raw() as u8)
                 .ok_or_else(|| {
