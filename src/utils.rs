@@ -139,6 +139,17 @@ pub fn is_plaintext_mime(mime: &str) -> bool {
     plaintext_mime_score(mime).is_some()
 }
 
+pub fn image_mime_score(mime: &str) -> usize {
+    // low to high
+    const IMAGE_MIMES_ORDER: &[&str] = &["image/jpeg", "image/png", "image/gif", "image/svg+xml"];
+
+    IMAGE_MIMES_ORDER
+        .iter()
+        .position(|b| mime.eq_ignore_ascii_case(b))
+        .map(|pos| pos + 1)
+        .unwrap_or(0)
+}
+
 pub fn is_image_mime(mime: &str) -> bool {
     mime.starts_with("image/")
 }

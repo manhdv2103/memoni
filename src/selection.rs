@@ -22,7 +22,7 @@ use xkeysym::Keysym;
 use crate::{
     atom_pool::AtomPool,
     config::{Binding, Config, Modifier},
-    utils::{is_plaintext_mime, plaintext_mime_score},
+    utils::{image_mime_score, is_image_mime, is_plaintext_mime, plaintext_mime_score},
     x11_key_converter::X11KeyConverter,
     x11_window::X11Window,
 };
@@ -816,6 +816,7 @@ fn filter_mimes(mimes: HashMap<Atom, String>) -> HashMap<Atom, String> {
     let mut plain: Option<(Atom, &str)> = None;
     let mut plain_score = 0;
     let mut image: Option<(Atom, &str)> = None;
+    let mut image_score = 0;
 
     for (atom, mime) in mimes.iter() {
         if let Some(score) = plaintext_mime_score(mime) {
@@ -823,13 +824,19 @@ fn filter_mimes(mimes: HashMap<Atom, String>) -> HashMap<Atom, String> {
                 plain = Some((*atom, mime));
                 plain_score = score;
             }
-        } else if mime.starts_with("image/") {
-            if image.is_none() {
+        } else if is_image_mime(mime) {
+            let score = image_mime_score(mime);
+            if image.is_none_or(|_| score > image_score) {
                 image = Some((*atom, mime));
+                image_score = score;
             }
         } else if mime == "x-kde-passwordManagerHint" {
             filtered_mimes.drain();
             return filtered_mimes;
+
+        // Weird mimes prevent copying image on firefox
+        } else if mime == "text/ico" || mime == "application/ico" {
+            continue;
         } else {
             filtered_mimes.insert(*atom, mime.to_string());
         }
