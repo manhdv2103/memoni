@@ -701,8 +701,17 @@ impl<'a> Selection<'a> {
 
     fn purge_overdue_tasks(&mut self) {
         let now = Instant::now();
-        self.request_tasks
-            .retain(|_, task| now.duration_since(task.last_update) < OVERDUE_TIMEOUT);
+
+        let (kept, removed): (HashMap<_, _>, HashMap<_, _>) = self
+            .request_tasks
+            .drain()
+            .partition(|(_, task)| now.duration_since(task.last_update) < OVERDUE_TIMEOUT);
+        self.request_tasks = kept;
+
+        for transfer_atom in removed.keys() {
+            self.transfer_atoms.release(*transfer_atom);
+        }
+
         self.incr_paste_tasks
             .retain(|_, task| now.duration_since(task.last_update) < OVERDUE_TIMEOUT);
     }
