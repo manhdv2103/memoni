@@ -33,6 +33,7 @@ const HASH_SEED: usize = 0xfd9aadcf54cc0f35;
 const BINCODE_CONFIG: bincode::config::Configuration = bincode::config::standard();
 const OVERDUE_TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_INCR_SIZE: usize = 10 * 1024 * 1024;
+const INCR_CHUNK_SIZE: usize = 1024 * 1024 - 1;
 
 x11rb::atom_manager! {
     pub Atoms: AtomsCookie {
@@ -68,7 +69,7 @@ impl fmt::Display for SelectionType {
 }
 
 #[derive(Debug)]
-enum TaskState {
+enum RequestTaskState {
     TargetsRequest,
     PendingSelection {
         mimes: HashMap<Atom, String>,
@@ -84,20 +85,30 @@ enum TaskState {
 }
 
 #[derive(Debug)]
-struct Task {
-    state: TaskState,
+enum IncrPasteTaskState {
+    TransferingIncr {
+        target: u32,
+        item_id: u64,
+        data_atom_name: String,
+        offset: usize,
+    },
+}
+
+#[derive(Debug)]
+struct Task<S> {
+    state: S,
     last_update: Instant,
 }
 
-impl Task {
-    fn new(state: TaskState) -> Self {
+impl<S> Task<S> {
+    fn new(state: S) -> Self {
         Task {
             state,
             last_update: Instant::now(),
         }
     }
 
-    fn set_state(&mut self, state: TaskState) {
+    fn set_state(&mut self, state: S) {
         self.state = state;
         self.last_update = Instant::now();
     }
@@ -112,9 +123,10 @@ pub struct Selection<'a> {
     config: &'a Config,
     selection_atom: Atom,
     atoms: Atoms,
-    tasks: HashMap<Atom, Task>,
-    transfer_window: u32,
-    paste_window: u32,
+    request_tasks: HashMap<Atom, Task<RequestTaskState>>,
+    incr_paste_tasks: HashMap<(Window, Atom), Task<IncrPasteTaskState>>,
+    transfer_window: Window,
+    paste_window: Window,
     transfer_atoms: AtomPool<'a>,
     mime_atoms: RefCell<HashMap<String, Atom>>,
     paste_item_id: Option<u64>,
@@ -186,7 +198,8 @@ impl<'a> Selection<'a> {
             config,
             selection_atom,
             atoms,
-            tasks: HashMap::new(),
+            request_tasks: HashMap::new(),
+            incr_paste_tasks: HashMap::new(),
             transfer_window,
             paste_window: window.win_id,
             transfer_atoms: AtomPool::new(conn, "SELECTION_DATA")?,
@@ -212,7 +225,7 @@ impl<'a> Selection<'a> {
                     return Ok(None);
                 }
 
-                let Some(task) = self.tasks.get_mut(&transfer_atom) else {
+                let Some(task) = self.request_tasks.get_mut(&transfer_atom) else {
                     return Ok(None);
                 };
 
@@ -227,7 +240,7 @@ impl<'a> Selection<'a> {
                 conn.flush()?;
 
                 return match task.state {
-                    TaskState::TargetsRequest => {
+                    RequestTaskState::TargetsRequest => {
                         let property = property.reply()?;
                         if property.type_ == atoms.INCR {
                             // Ignoring abusive TARGETS property
@@ -282,14 +295,14 @@ impl<'a> Selection<'a> {
                             .check()?;
                         }
 
-                        task.set_state(TaskState::PendingSelection {
+                        task.set_state(RequestTaskState::PendingSelection {
                             mimes,
                             data: BTreeMap::new(),
                         });
 
                         Ok(None)
                     }
-                    TaskState::PendingSelection {
+                    RequestTaskState::PendingSelection {
                         ref mut mimes,
                         ref mut data,
                     } => {
@@ -303,7 +316,7 @@ impl<'a> Selection<'a> {
                             let mimes = mem::take(mimes);
                             let data = mem::take(data);
 
-                            task.set_state(TaskState::PendingIncr {
+                            task.set_state(RequestTaskState::PendingIncr {
                                 mimes,
                                 data,
                                 current_mime_atom: ev.target,
@@ -321,7 +334,7 @@ impl<'a> Selection<'a> {
                             ev.target,
                         )
                     }
-                    TaskState::PendingIncr { .. } => {
+                    RequestTaskState::PendingIncr { .. } => {
                         unreachable!("PendingIncr should only be handled in PropertyNotify");
                     }
                 };
@@ -341,12 +354,14 @@ impl<'a> Selection<'a> {
                 )?
                 .check()?;
 
-                self.tasks
-                    .insert(transfer_atom, Task::new(TaskState::TargetsRequest));
+                self.request_tasks
+                    .insert(transfer_atom, Task::new(RequestTaskState::TargetsRequest));
             }
 
             // Handle receiving INCR selection
-            Event::PropertyNotify(ev) => {
+            Event::PropertyNotify(ev)
+                if !self.incr_paste_tasks.contains_key(&(ev.window, ev.atom)) =>
+            {
                 if ev.atom == self.atoms._NET_WM_NAME {
                     // Ignoring window name property change.
                     return Ok(None);
@@ -362,11 +377,11 @@ impl<'a> Selection<'a> {
                 }
 
                 let transfer_atom = ev.atom;
-                let Some(task) = self.tasks.get_mut(&transfer_atom) else {
+                let Some(task) = self.request_tasks.get_mut(&transfer_atom) else {
                     return Ok(None);
                 };
 
-                let incr_task_state = if let TaskState::PendingIncr {
+                let incr_task_state = if let RequestTaskState::PendingIncr {
                     mimes,
                     data,
                     current_mime_atom,
@@ -403,7 +418,7 @@ impl<'a> Selection<'a> {
                     // Empty property signals completion
                     if property.value.is_empty() {
                         self.conn.delete_property(ev.window, transfer_atom)?;
-                        task.state = TaskState::PendingSelection { mimes, data };
+                        task.state = RequestTaskState::PendingSelection { mimes, data };
 
                         return self.process_selection_data(
                             transfer_atom,
@@ -415,12 +430,12 @@ impl<'a> Selection<'a> {
 
                     if buffer.len() + property.value.len() > MAX_INCR_SIZE {
                         eprintln!("Warning: INCR transfer exceeds size limit, aborting");
-                        self.tasks.remove(&transfer_atom);
+                        self.request_tasks.remove(&transfer_atom);
                         return Ok(None);
                     }
 
                     buffer.extend_from_slice(&property.value);
-                    task.state = TaskState::PendingIncr {
+                    task.state = RequestTaskState::PendingIncr {
                         mimes,
                         data,
                         buffer,
@@ -489,7 +504,7 @@ impl<'a> Selection<'a> {
                     }
 
                     if atom == ev.target {
-                        requested_data = Some(data);
+                        requested_data = Some((data, atom_name));
                     }
                 }
 
@@ -509,15 +524,106 @@ impl<'a> Selection<'a> {
                     return reply(property);
                 }
 
-                conn.change_property8(
-                    PropMode::REPLACE,
-                    ev.requestor,
-                    property,
-                    ev.target,
-                    requested_data.unwrap(),
-                )?
-                .check()?;
+                let (data, atom_name) = requested_data.unwrap();
+
+                if data.len() > INCR_CHUNK_SIZE {
+                    conn.change_window_attributes(
+                        ev.requestor,
+                        &ChangeWindowAttributesAux::new().event_mask(EventMask::PROPERTY_CHANGE),
+                    )?;
+                    conn.change_property32(
+                        PropMode::REPLACE,
+                        ev.requestor,
+                        property,
+                        atoms.INCR,
+                        &[u32::try_from(data.len()).unwrap_or(u32::MAX)],
+                    )?
+                    .check()?;
+
+                    self.incr_paste_tasks.insert(
+                        (ev.requestor, property),
+                        Task::new(IncrPasteTaskState::TransferingIncr {
+                            target: ev.target,
+                            item_id,
+                            data_atom_name: atom_name.to_string(),
+                            offset: 0,
+                        }),
+                    );
+
+                    return reply(property);
+                }
+
+                conn.change_property8(PropMode::REPLACE, ev.requestor, property, ev.target, data)?
+                    .check()?;
                 reply(property)?;
+            }
+
+            // Handle INCR paste request
+            Event::PropertyNotify(ev) => {
+                if ev.state != Property::DELETE {
+                    // Ignoring irrelevant property state change
+                    return Ok(None);
+                }
+
+                let Some(task) = self.incr_paste_tasks.get_mut(&(ev.window, ev.atom)) else {
+                    return Ok(None);
+                };
+
+                match task.state {
+                    IncrPasteTaskState::TransferingIncr {
+                        target,
+                        item_id,
+                        ref data_atom_name,
+                        ref mut offset,
+                    } => {
+                        let end_transfering = |incr_paste_tasks: &mut HashMap<_, _>| -> Result<()> {
+                            incr_paste_tasks.remove(&(ev.window, ev.atom));
+                            conn.change_window_attributes(
+                                ev.window,
+                                &ChangeWindowAttributesAux::new().event_mask(EventMask::NO_EVENT),
+                            )?;
+                            Ok(())
+                        };
+
+                        if let Some(data) = &self
+                            .items
+                            .iter()
+                            .find(|i| i.id == item_id)
+                            .and_then(|item| item.data.get(data_atom_name))
+                        {
+                            let end = offset.saturating_add(INCR_CHUNK_SIZE).min(data.len());
+                            let chunk = &data[*offset..end];
+
+                            if *offset == end {
+                                end_transfering(&mut self.incr_paste_tasks)?;
+                            } else {
+                                *offset = end;
+                            }
+
+                            conn.change_property8(
+                                PropMode::REPLACE,
+                                ev.window,
+                                ev.atom,
+                                target,
+                                chunk,
+                            )?
+                            .check()?;
+                        } else {
+                            // The item has disappeared somehow, stops transfering
+                            end_transfering(&mut self.incr_paste_tasks)?;
+                            conn.change_property8(
+                                PropMode::REPLACE,
+                                ev.window,
+                                ev.atom,
+                                target,
+                                &[],
+                            )?
+                            .check()?;
+                        }
+                    }
+                }
+
+                return Ok(None);
             }
             _ => {}
         }
@@ -534,9 +640,9 @@ impl<'a> Selection<'a> {
         mime_name: String,
         mime_atom: Atom,
     ) -> Result<Option<&SelectionItem>> {
-        let mut task = self.tasks.remove(&transfer_atom).unwrap();
+        let mut task = self.request_tasks.remove(&transfer_atom).unwrap();
 
-        let TaskState::PendingSelection {
+        let RequestTaskState::PendingSelection {
             ref mut data,
             ref mimes,
         } = task.state
@@ -556,7 +662,7 @@ impl<'a> Selection<'a> {
         }
 
         if let Some(&next_atom) = mimes.keys().next() {
-            self.tasks.insert(transfer_atom, task);
+            self.request_tasks.insert(transfer_atom, task);
             self.conn
                 .convert_selection(
                     self.transfer_window,
@@ -585,7 +691,9 @@ impl<'a> Selection<'a> {
 
     fn purge_overdue_tasks(&mut self) {
         let now = Instant::now();
-        self.tasks
+        self.request_tasks
+            .retain(|_, task| now.duration_since(task.last_update) < OVERDUE_TIMEOUT);
+        self.incr_paste_tasks
             .retain(|_, task| now.duration_since(task.last_update) < OVERDUE_TIMEOUT);
     }
 
@@ -718,7 +826,7 @@ fn filter_mimes(mimes: HashMap<Atom, String>) -> HashMap<Atom, String> {
     filtered_mimes
 }
 
-fn get_window_class(conn: &XCBConnection, window: u32) -> Result<Option<(String, String)>> {
+fn get_window_class(conn: &XCBConnection, window: Window) -> Result<Option<(String, String)>> {
     let reply: GetPropertyReply = conn
         .get_property(
             false,
