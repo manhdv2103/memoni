@@ -212,420 +212,430 @@ impl<'a> Selection<'a> {
         let conn = self.conn;
         let atoms = self.atoms;
 
-        match event {
-            // Capture copied data
-            Event::SelectionNotify(ev) => {
-                if ev.requestor != self.transfer_window {
-                    return Ok(None);
-                }
-
-                // Conversion request failed
-                let transfer_atom = ev.property;
-                if transfer_atom == x11rb::NONE {
-                    return Ok(None);
-                }
-
-                let Some(task) = self.request_tasks.get_mut(&transfer_atom) else {
-                    return Ok(None);
-                };
-
-                let property = conn.get_property(
-                    true,
-                    ev.requestor,
-                    ev.property,
-                    GetPropertyType::ANY,
-                    0,
-                    u32::MAX,
-                )?;
-                conn.flush()?;
-
-                return match task.state {
-                    RequestTaskState::TargetsRequest => {
-                        let property = property.reply()?;
-                        if property.type_ == atoms.INCR {
-                            // Ignoring abusive TARGETS property
-                            return Ok(None);
-                        }
-
-                        let Some(value) = property.value32() else {
-                            // Invalid TARGETS property value format
-                            return Ok(None);
-                        };
-
-                        let mut atom_cookies = Vec::new();
-                        for atom in value {
-                            // Special atoms
-                            if [
-                                atoms.TIMESTAMP,
-                                atoms.TARGETS,
-                                atoms.SAVE_TARGETS,
-                                atoms.MULTIPLE,
-                            ]
-                            .contains(&atom)
-                            {
-                                continue;
-                            }
-
-                            atom_cookies.push((conn.get_atom_name(atom)?, atom));
-                        }
-                        if atom_cookies.is_empty() {
-                            return Ok(None);
-                        }
-
-                        let mut mimes = HashMap::new();
-                        for (cookie, atom) in atom_cookies {
-                            let reply = cookie.reply()?;
-                            let name = str::from_utf8(&reply.name)?.to_string();
-                            mimes.insert(atom, name);
-                        }
-
-                        let mimes = filter_mimes(mimes);
-                        if mimes.is_empty() {
-                            return Ok(None);
-                        }
-
-                        if let Some(&target_atom) = mimes.keys().next() {
-                            conn.convert_selection(
-                                self.transfer_window,
-                                ev.selection,
-                                target_atom,
-                                transfer_atom,
-                                x11rb::CURRENT_TIME,
-                            )?
-                            .check()?;
-                        }
-
-                        task.set_state(RequestTaskState::PendingSelection {
-                            mimes,
-                            data: BTreeMap::new(),
-                        });
-
-                        Ok(None)
+        'blk: {
+            match event {
+                // Capture copied data
+                Event::SelectionNotify(ev) => {
+                    if ev.requestor != self.transfer_window {
+                        break 'blk;
                     }
-                    RequestTaskState::PendingSelection {
-                        ref mut mimes,
-                        ref mut data,
-                    } => {
-                        let Some(mime_name) = mimes.remove(&ev.target) else {
-                            // Not a pending target
-                            return Ok(None);
-                        };
 
-                        let property = property.reply()?;
-                        if property.type_ == atoms.INCR {
-                            let mimes = mem::take(mimes);
-                            let data = mem::take(data);
-
-                            task.set_state(RequestTaskState::PendingIncr {
-                                mimes,
-                                data,
-                                current_mime_atom: ev.target,
-                                current_mime_name: mime_name,
-                                buffer: Vec::new(),
-                            });
-
-                            return Ok(None);
-                        }
-
-                        self.process_selection_data(
-                            transfer_atom,
-                            property.value,
-                            mime_name,
-                            ev.target,
-                        )
+                    // Conversion request failed
+                    let transfer_atom = ev.property;
+                    if transfer_atom == x11rb::NONE {
+                        break 'blk;
                     }
-                    RequestTaskState::PendingIncr { .. } => {
-                        unreachable!("PendingIncr should only be handled in PropertyNotify");
-                    }
-                };
-            }
-            Event::XfixesSelectionNotify(ev) => {
-                if ev.owner == self.paste_window {
-                    return Ok(None);
-                }
 
-                let transfer_atom = self.transfer_atoms.get()?;
-                conn.convert_selection(
-                    self.transfer_window,
-                    ev.selection,
-                    atoms.TARGETS,
-                    transfer_atom,
-                    x11rb::CURRENT_TIME,
-                )?
-                .check()?;
+                    let Some(task) = self.request_tasks.get_mut(&transfer_atom) else {
+                        break 'blk;
+                    };
 
-                self.request_tasks
-                    .insert(transfer_atom, Task::new(RequestTaskState::TargetsRequest));
-            }
-
-            // Handle receiving INCR selection
-            Event::PropertyNotify(ev)
-                if !self.incr_paste_tasks.contains_key(&(ev.window, ev.atom)) =>
-            {
-                if ev.atom == self.atoms._NET_WM_NAME {
-                    // Ignoring window name property change.
-                    return Ok(None);
-                }
-
-                if ev.state != Property::NEW_VALUE {
-                    // Ignoring irrelevant property state change
-                    return Ok(None);
-                }
-
-                if ev.window != self.transfer_window {
-                    return Ok(None);
-                }
-
-                let transfer_atom = ev.atom;
-                let Some(task) = self.request_tasks.get_mut(&transfer_atom) else {
-                    return Ok(None);
-                };
-
-                let incr_task_state = if let RequestTaskState::PendingIncr {
-                    mimes,
-                    data,
-                    current_mime_atom,
-                    current_mime_name,
-                    buffer,
-                } = &mut task.state
-                {
-                    Some((
-                        mem::take(mimes),
-                        mem::take(data),
-                        mem::take(buffer),
-                        mem::take(current_mime_name),
-                        *current_mime_atom,
-                    ))
-                } else {
-                    None
-                };
-
-                if let Some((mimes, data, mut buffer, current_mime_name, current_mime_atom)) =
-                    incr_task_state
-                {
                     let property = conn.get_property(
                         true,
-                        ev.window,
-                        ev.atom,
+                        ev.requestor,
+                        ev.property,
                         GetPropertyType::ANY,
                         0,
                         u32::MAX,
                     )?;
                     conn.flush()?;
 
-                    let property = property.reply()?;
+                    match task.state {
+                        RequestTaskState::TargetsRequest => {
+                            let property = property.reply()?;
+                            if property.type_ == atoms.INCR {
+                                // Ignoring abusive TARGETS property
+                                break 'blk;
+                            }
 
-                    // Empty property signals completion
-                    if property.value.is_empty() {
-                        self.conn.delete_property(ev.window, transfer_atom)?;
-                        task.state = RequestTaskState::PendingSelection { mimes, data };
+                            let Some(value) = property.value32() else {
+                                // Invalid TARGETS property value format
+                                break 'blk;
+                            };
 
-                        return self.process_selection_data(
-                            transfer_atom,
+                            let mut atom_cookies = Vec::new();
+                            for atom in value {
+                                // Special atoms
+                                if [
+                                    atoms.TIMESTAMP,
+                                    atoms.TARGETS,
+                                    atoms.SAVE_TARGETS,
+                                    atoms.MULTIPLE,
+                                ]
+                                .contains(&atom)
+                                {
+                                    continue;
+                                }
+
+                                atom_cookies.push((conn.get_atom_name(atom)?, atom));
+                            }
+                            if atom_cookies.is_empty() {
+                                break 'blk;
+                            }
+
+                            let mut mimes = HashMap::new();
+                            for (cookie, atom) in atom_cookies {
+                                let reply = cookie.reply()?;
+                                let name = str::from_utf8(&reply.name)?.to_string();
+                                mimes.insert(atom, name);
+                            }
+
+                            let mimes = filter_mimes(mimes);
+                            if mimes.is_empty() {
+                                break 'blk;
+                            }
+
+                            if let Some(&target_atom) = mimes.keys().next() {
+                                conn.convert_selection(
+                                    self.transfer_window,
+                                    ev.selection,
+                                    target_atom,
+                                    transfer_atom,
+                                    x11rb::CURRENT_TIME,
+                                )?
+                                .check()?;
+                            }
+
+                            task.set_state(RequestTaskState::PendingSelection {
+                                mimes,
+                                data: BTreeMap::new(),
+                            });
+                        }
+                        RequestTaskState::PendingSelection {
+                            ref mut mimes,
+                            ref mut data,
+                        } => {
+                            let Some(mime_name) = mimes.remove(&ev.target) else {
+                                // Not a pending target
+                                break 'blk;
+                            };
+
+                            let property = property.reply()?;
+                            if property.type_ == atoms.INCR {
+                                let mimes = mem::take(mimes);
+                                let data = mem::take(data);
+
+                                task.set_state(RequestTaskState::PendingIncr {
+                                    mimes,
+                                    data,
+                                    current_mime_atom: ev.target,
+                                    current_mime_name: mime_name,
+                                    buffer: Vec::new(),
+                                });
+
+                                break 'blk;
+                            }
+
+                            return self.process_selection_data(
+                                transfer_atom,
+                                property.value,
+                                mime_name,
+                                ev.target,
+                            );
+                        }
+                        RequestTaskState::PendingIncr { .. } => {
+                            unreachable!("PendingIncr should only be handled in PropertyNotify");
+                        }
+                    };
+                }
+                Event::XfixesSelectionNotify(ev) => {
+                    if ev.owner == self.paste_window {
+                        break 'blk;
+                    }
+
+                    let transfer_atom = self.transfer_atoms.get()?;
+                    conn.convert_selection(
+                        self.transfer_window,
+                        ev.selection,
+                        atoms.TARGETS,
+                        transfer_atom,
+                        x11rb::CURRENT_TIME,
+                    )?
+                    .check()?;
+
+                    self.request_tasks
+                        .insert(transfer_atom, Task::new(RequestTaskState::TargetsRequest));
+                }
+
+                // Handle receiving INCR selection
+                Event::PropertyNotify(ev)
+                    if !self.incr_paste_tasks.contains_key(&(ev.window, ev.atom)) =>
+                {
+                    if ev.atom == self.atoms._NET_WM_NAME {
+                        // Ignoring window name property change.
+                        break 'blk;
+                    }
+
+                    if ev.state != Property::NEW_VALUE {
+                        // Ignoring irrelevant property state change
+                        break 'blk;
+                    }
+
+                    if ev.window != self.transfer_window {
+                        break 'blk;
+                    }
+
+                    let transfer_atom = ev.atom;
+                    let Some(task) = self.request_tasks.get_mut(&transfer_atom) else {
+                        break 'blk;
+                    };
+
+                    let incr_task_state = if let RequestTaskState::PendingIncr {
+                        mimes,
+                        data,
+                        current_mime_atom,
+                        current_mime_name,
+                        buffer,
+                    } = &mut task.state
+                    {
+                        Some((
+                            mem::take(mimes),
+                            mem::take(data),
+                            mem::take(buffer),
+                            mem::take(current_mime_name),
+                            *current_mime_atom,
+                        ))
+                    } else {
+                        None
+                    };
+
+                    if let Some((mimes, data, mut buffer, current_mime_name, current_mime_atom)) =
+                        incr_task_state
+                    {
+                        let property = conn.get_property(
+                            true,
+                            ev.window,
+                            ev.atom,
+                            GetPropertyType::ANY,
+                            0,
+                            u32::MAX,
+                        )?;
+                        conn.flush()?;
+
+                        let property = property.reply()?;
+
+                        // Empty property signals completion
+                        if property.value.is_empty() {
+                            self.conn.delete_property(ev.window, transfer_atom)?;
+                            task.state = RequestTaskState::PendingSelection { mimes, data };
+
+                            return self.process_selection_data(
+                                transfer_atom,
+                                buffer,
+                                current_mime_name,
+                                current_mime_atom,
+                            );
+                        }
+
+                        if buffer.len() + property.value.len() > MAX_INCR_SIZE {
+                            eprintln!("Warning: INCR transfer exceeds size limit, aborting");
+                            self.request_tasks.remove(&transfer_atom);
+                            break 'blk;
+                        }
+
+                        buffer.extend_from_slice(&property.value);
+                        task.state = RequestTaskState::PendingIncr {
+                            mimes,
+                            data,
                             buffer,
                             current_mime_name,
                             current_mime_atom,
-                        );
-                    }
-
-                    if buffer.len() + property.value.len() > MAX_INCR_SIZE {
-                        eprintln!("Warning: INCR transfer exceeds size limit, aborting");
-                        self.request_tasks.remove(&transfer_atom);
-                        return Ok(None);
-                    }
-
-                    buffer.extend_from_slice(&property.value);
-                    task.state = RequestTaskState::PendingIncr {
-                        mimes,
-                        data,
-                        buffer,
-                        current_mime_name,
-                        current_mime_atom,
-                    };
-                }
-            }
-
-            // Handle paste request
-            Event::SelectionRequest(ev) => {
-                let reply = |property| {
-                    conn.send_event(
-                        false,
-                        ev.requestor,
-                        EventMask::NO_EVENT,
-                        SelectionNotifyEvent {
-                            response_type: SELECTION_NOTIFY_EVENT,
-                            sequence: ev.sequence,
-                            time: ev.time,
-                            requestor: ev.requestor,
-                            selection: ev.selection,
-                            target: ev.target,
-                            property,
-                        },
-                    )?
-                    .check()?;
-                    Ok(None)
-                };
-
-                let property = if ev.property == x11rb::NONE {
-                    // Obsolete client
-                    ev.target
-                } else {
-                    ev.property
-                };
-                if property == x11rb::NONE {
-                    return reply(x11rb::NONE);
-                }
-
-                let reply = |reply_property| {
-                    if reply_property == x11rb::NONE {
-                        conn.delete_property(ev.requestor, property)?.check()?;
-                    }
-                    reply(reply_property)
-                };
-
-                if ![self.atoms.CLIPBOARD, self.atoms.PRIMARY].contains(&ev.selection) {
-                    return reply(x11rb::NONE);
-                }
-                let Some(item_id) = self.paste_item_id else {
-                    return reply(x11rb::NONE);
-                };
-                let Some(item) = &self.items.iter().find(|i| i.id == item_id) else {
-                    return reply(x11rb::NONE);
-                };
-
-                let mut supported_atoms = Vec::new();
-                supported_atoms.push(self.atoms.TARGETS);
-                let mut requested_data = None;
-                for (atom_name, data) in &item.data {
-                    let atom =
-                        get_or_create_mime_atom(self.conn, self.mime_atoms.get_mut(), atom_name)?;
-                    if atom != x11rb::NONE {
-                        supported_atoms.push(atom);
-                    }
-
-                    if atom == ev.target {
-                        requested_data = Some((data, atom_name));
-                    }
-                }
-
-                if !supported_atoms.contains(&ev.target) {
-                    return reply(x11rb::NONE);
-                }
-
-                if ev.target == self.atoms.TARGETS {
-                    conn.change_property32(
-                        PropMode::REPLACE,
-                        ev.requestor,
-                        property,
-                        AtomEnum::ATOM,
-                        &supported_atoms,
-                    )?
-                    .check()?;
-                    return reply(property);
-                }
-
-                let (data, atom_name) = requested_data.unwrap();
-
-                if data.len() > INCR_CHUNK_SIZE {
-                    conn.change_window_attributes(
-                        ev.requestor,
-                        &ChangeWindowAttributesAux::new().event_mask(EventMask::PROPERTY_CHANGE),
-                    )?;
-                    conn.change_property32(
-                        PropMode::REPLACE,
-                        ev.requestor,
-                        property,
-                        atoms.INCR,
-                        &[u32::try_from(data.len()).unwrap_or(u32::MAX)],
-                    )?
-                    .check()?;
-
-                    self.incr_paste_tasks.insert(
-                        (ev.requestor, property),
-                        Task::new(IncrPasteTaskState::TransferingIncr {
-                            target: ev.target,
-                            item_id,
-                            data_atom_name: atom_name.to_string(),
-                            offset: 0,
-                        }),
-                    );
-
-                    return reply(property);
-                }
-
-                conn.change_property8(PropMode::REPLACE, ev.requestor, property, ev.target, data)?
-                    .check()?;
-                reply(property)?;
-            }
-
-            // Handle INCR paste request
-            Event::PropertyNotify(ev) => {
-                if ev.state != Property::DELETE {
-                    // Ignoring irrelevant property state change
-                    return Ok(None);
-                }
-
-                let Some(task) = self.incr_paste_tasks.get_mut(&(ev.window, ev.atom)) else {
-                    return Ok(None);
-                };
-
-                match task.state {
-                    IncrPasteTaskState::TransferingIncr {
-                        target,
-                        item_id,
-                        ref data_atom_name,
-                        ref mut offset,
-                    } => {
-                        let end_transfering = |incr_paste_tasks: &mut HashMap<_, _>| -> Result<()> {
-                            incr_paste_tasks.remove(&(ev.window, ev.atom));
-                            conn.change_window_attributes(
-                                ev.window,
-                                &ChangeWindowAttributesAux::new().event_mask(EventMask::NO_EVENT),
-                            )?;
-                            Ok(())
                         };
+                    }
+                }
 
-                        if let Some(data) = &self
-                            .items
-                            .iter()
-                            .find(|i| i.id == item_id)
-                            .and_then(|item| item.data.get(data_atom_name))
-                        {
-                            let end = offset.saturating_add(INCR_CHUNK_SIZE).min(data.len());
-                            let chunk = &data[*offset..end];
+                // Handle paste request
+                Event::SelectionRequest(ev) => {
+                    let reply = |property| -> Result<()> {
+                        conn.send_event(
+                            false,
+                            ev.requestor,
+                            EventMask::NO_EVENT,
+                            SelectionNotifyEvent {
+                                response_type: SELECTION_NOTIFY_EVENT,
+                                sequence: ev.sequence,
+                                time: ev.time,
+                                requestor: ev.requestor,
+                                selection: ev.selection,
+                                target: ev.target,
+                                property,
+                            },
+                        )?
+                        .check()?;
+                        Ok(())
+                    };
 
-                            if *offset == end {
-                                end_transfering(&mut self.incr_paste_tasks)?;
+                    let property = if ev.property == x11rb::NONE {
+                        // Obsolete client
+                        ev.target
+                    } else {
+                        ev.property
+                    };
+                    if property == x11rb::NONE {
+                        break 'blk reply(x11rb::NONE)?;
+                    }
+
+                    let reply = |reply_property| {
+                        if reply_property == x11rb::NONE {
+                            conn.delete_property(ev.requestor, property)?.check()?;
+                        }
+                        reply(reply_property)
+                    };
+
+                    if ![self.atoms.CLIPBOARD, self.atoms.PRIMARY].contains(&ev.selection) {
+                        break 'blk reply(x11rb::NONE)?;
+                    }
+                    let Some(item_id) = self.paste_item_id else {
+                        break 'blk reply(x11rb::NONE)?;
+                    };
+                    let Some(item) = &self.items.iter().find(|i| i.id == item_id) else {
+                        break 'blk reply(x11rb::NONE)?;
+                    };
+
+                    let mut supported_atoms = Vec::new();
+                    supported_atoms.push(self.atoms.TARGETS);
+                    let mut requested_data = None;
+                    for (atom_name, data) in &item.data {
+                        let atom = get_or_create_mime_atom(
+                            self.conn,
+                            self.mime_atoms.get_mut(),
+                            atom_name,
+                        )?;
+                        if atom != x11rb::NONE {
+                            supported_atoms.push(atom);
+                        }
+
+                        if atom == ev.target {
+                            requested_data = Some((data, atom_name));
+                        }
+                    }
+
+                    if !supported_atoms.contains(&ev.target) {
+                        break 'blk reply(x11rb::NONE)?;
+                    }
+
+                    if ev.target == self.atoms.TARGETS {
+                        conn.change_property32(
+                            PropMode::REPLACE,
+                            ev.requestor,
+                            property,
+                            AtomEnum::ATOM,
+                            &supported_atoms,
+                        )?
+                        .check()?;
+                        break 'blk reply(property)?;
+                    }
+
+                    let (data, atom_name) = requested_data.unwrap();
+
+                    if data.len() > INCR_CHUNK_SIZE {
+                        conn.change_window_attributes(
+                            ev.requestor,
+                            &ChangeWindowAttributesAux::new()
+                                .event_mask(EventMask::PROPERTY_CHANGE),
+                        )?;
+                        conn.change_property32(
+                            PropMode::REPLACE,
+                            ev.requestor,
+                            property,
+                            atoms.INCR,
+                            &[u32::try_from(data.len()).unwrap_or(u32::MAX)],
+                        )?
+                        .check()?;
+
+                        self.incr_paste_tasks.insert(
+                            (ev.requestor, property),
+                            Task::new(IncrPasteTaskState::TransferingIncr {
+                                target: ev.target,
+                                item_id,
+                                data_atom_name: atom_name.to_string(),
+                                offset: 0,
+                            }),
+                        );
+
+                        break 'blk reply(property)?;
+                    }
+
+                    conn.change_property8(
+                        PropMode::REPLACE,
+                        ev.requestor,
+                        property,
+                        ev.target,
+                        data,
+                    )?
+                    .check()?;
+                    reply(property)?;
+                }
+
+                // Handle INCR paste request
+                Event::PropertyNotify(ev) => {
+                    if ev.state != Property::DELETE {
+                        // Ignoring irrelevant property state change
+                        break 'blk;
+                    }
+
+                    let Some(task) = self.incr_paste_tasks.get_mut(&(ev.window, ev.atom)) else {
+                        break 'blk;
+                    };
+
+                    match task.state {
+                        IncrPasteTaskState::TransferingIncr {
+                            target,
+                            item_id,
+                            ref data_atom_name,
+                            ref mut offset,
+                        } => {
+                            let end_transfering =
+                                |incr_paste_tasks: &mut HashMap<_, _>| -> Result<()> {
+                                    incr_paste_tasks.remove(&(ev.window, ev.atom));
+                                    conn.change_window_attributes(
+                                        ev.window,
+                                        &ChangeWindowAttributesAux::new()
+                                            .event_mask(EventMask::NO_EVENT),
+                                    )?;
+                                    Ok(())
+                                };
+
+                            if let Some(data) = &self
+                                .items
+                                .iter()
+                                .find(|i| i.id == item_id)
+                                .and_then(|item| item.data.get(data_atom_name))
+                            {
+                                let end = offset.saturating_add(INCR_CHUNK_SIZE).min(data.len());
+                                let chunk = &data[*offset..end];
+
+                                if *offset == end {
+                                    end_transfering(&mut self.incr_paste_tasks)?;
+                                } else {
+                                    *offset = end;
+                                }
+
+                                conn.change_property8(
+                                    PropMode::REPLACE,
+                                    ev.window,
+                                    ev.atom,
+                                    target,
+                                    chunk,
+                                )?
+                                .check()?;
                             } else {
-                                *offset = end;
+                                // The item has disappeared somehow, stops transfering
+                                end_transfering(&mut self.incr_paste_tasks)?;
+                                conn.change_property8(
+                                    PropMode::REPLACE,
+                                    ev.window,
+                                    ev.atom,
+                                    target,
+                                    &[],
+                                )?
+                                .check()?;
                             }
-
-                            conn.change_property8(
-                                PropMode::REPLACE,
-                                ev.window,
-                                ev.atom,
-                                target,
-                                chunk,
-                            )?
-                            .check()?;
-                        } else {
-                            // The item has disappeared somehow, stops transfering
-                            end_transfering(&mut self.incr_paste_tasks)?;
-                            conn.change_property8(
-                                PropMode::REPLACE,
-                                ev.window,
-                                ev.atom,
-                                target,
-                                &[],
-                            )?
-                            .check()?;
                         }
                     }
                 }
-
-                return Ok(None);
+                _ => {}
             }
-            _ => {}
         }
 
         self.purge_overdue_tasks();
