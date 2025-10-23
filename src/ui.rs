@@ -258,7 +258,7 @@ impl<'a> Ui<'a> {
             }) {
                 if move_by_key {
                     self.hovered_idx = None;
-                } else if self.hovered_idx.is_some() || pointer_moved {
+                } else if !self.is_initial_run && (self.hovered_idx.is_some() || pointer_moved) {
                     self.hovered_idx = Some(current_hovered_idx);
                     self.active_idx = current_hovered_idx;
                 }
