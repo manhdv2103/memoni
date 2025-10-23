@@ -586,12 +586,12 @@ impl<'a> Ui<'a> {
 
             if let Some((src, alt)) = img_metadata {
                 if !alt.is_empty() {
-                    btn = btn.label(normalize_string(&alt));
+                    btn = btn.label(normalize_display_string(&alt));
                 }
                 btn = btn.preview_source(&src);
             }
         } else if let Some(text) = text_content {
-            btn = btn.label(normalize_string(text));
+            btn = btn.label(normalize_display_string(text));
         } else {
             btn = btn.label(RichText::new("[unknown]").color(config.theme.muted_foreground));
         }
@@ -818,9 +818,15 @@ pub fn load_svg(svg_bytes: &[u8], size_hint: Vec2) -> Result<(RgbaImage, (u32, u
     ))
 }
 
-fn normalize_string(s: &str) -> String {
+fn normalize_display_string(s: &str) -> String {
     let mut res = String::with_capacity(s.len());
-    for c in s.chars() {
+    for (i, c) in s.chars().enumerate() {
+        // Very very long string causes egui to choke on first render, even when we only display it on a single line
+        if i == 10_000 && i < s.len() - 1 {
+            res.push('…');
+            break;
+        }
+
         match c {
             '\r' => {}
             '\n' => res.push('⏎'),
