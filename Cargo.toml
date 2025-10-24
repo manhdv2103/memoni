@@ -19,7 +19,7 @@ image = { version = "0.25.8", default-features = false, features = ["jpeg", "png
 lexopt = "0.3.1"
 md-5 = "0.10.6"
 mime = "0.3.17"
-mio = { version = "1.0.4", features = ["os-poll"] }
+mio = "1.0.4"
 raw-window-handle = "0.6.2"
 resvg = { version = "0.45.1", default-features = false }
 serde = { version = "1.0.223", features = ["derive"] }

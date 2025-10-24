@@ -6,20 +6,18 @@ use memoni::ui::{Ui, UiFlow};
 use memoni::x11_key_converter::X11KeyConverter;
 use memoni::x11_window::X11Window;
 use memoni::{opengl_context::OpenGLContext, selection::SelectionType};
-use mio::{net::UnixListener, unix::SourceFd};
+use mio::unix::SourceFd;
 use signal_hook::consts::TERM_SIGNALS;
 use signal_hook_mio::v1_0::Signals;
 use std::cell::RefCell;
 use std::mem;
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::rc::Rc;
 use std::{
     ffi::OsStr,
-    fs, io,
-    io::{Read, Write},
-    os::{
-        fd::{AsFd as _, AsRawFd as _},
-        unix::net::UnixStream,
-    },
+    fs,
+    io::{self, Read, Write},
+    os::fd::{AsFd as _, AsRawFd as _},
     path::Path,
     time::Duration,
 };
@@ -352,9 +350,13 @@ fn create_poll<P: AsRef<Path>>(
         fs::remove_file(&socket_path)?;
     }
 
-    let mut listener = UnixListener::bind(&socket_path)?;
-    poll.registry()
-        .register(&mut listener, MEMONI_TOKEN, mio::Interest::READABLE)?;
+    let listener = UnixListener::bind(&socket_path)?;
+    listener.set_nonblocking(true)?;
+    poll.registry().register(
+        &mut SourceFd(&listener.as_raw_fd()),
+        MEMONI_TOKEN,
+        mio::Interest::READABLE,
+    )?;
 
     Ok((poll, listener))
 }
