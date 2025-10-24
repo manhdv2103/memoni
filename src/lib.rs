@@ -3,6 +3,7 @@ pub mod config;
 pub mod freedesktop_cache;
 pub mod input;
 pub mod opengl_context;
+pub mod persistence;
 pub mod selection;
 pub mod ui;
 pub mod utils;

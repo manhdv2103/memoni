@@ -1,6 +1,7 @@
 use anyhow::{Result, bail};
 use memoni::config::Config;
 use memoni::input::Input;
+use memoni::persistence::Persistence;
 use memoni::selection::Selection;
 use memoni::ui::{Ui, UiFlow};
 use memoni::x11_key_converter::X11KeyConverter;
@@ -150,13 +151,19 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
     let mut gl_context = unsafe { OpenGLContext::new(&window, &config)? };
     let key_converter = Rc::new(RefCell::new(X11KeyConverter::new(&window.conn)?));
     let mut input = Input::new(&window, key_converter.clone())?;
+    let persistence = Persistence::new(args.selection.clone())?;
     let mut selection = Selection::new(
+        persistence.load_selection_items()?,
         &window,
         key_converter.clone(),
         args.selection.clone(),
         &config,
     )?;
+
     let mut ui = Ui::new(&config)?;
+    for item in &selection.items {
+        ui.build_button_widget(item)?;
+    }
 
     let mut signals = Signals::new(TERM_SIGNALS)?;
     let (mut poll, socket_listener) = match create_poll(&window.conn, &socket_path, &mut signals) {
@@ -271,6 +278,8 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
                         ui.build_button_widget(new_item)?;
                     }
                     ui.remove_button_widgets(removed_selection_items);
+
+                    persistence.save_selection_items(&selection.items)?;
                 }
 
                 for input_event in &input.egui_input.events {

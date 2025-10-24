@@ -7,7 +7,6 @@ use std::collections::HashMap;
 use std::fmt::{self, Display, Formatter};
 use std::fs;
 use std::ops::Deref;
-use std::path::PathBuf;
 use std::str::FromStr;
 use xkeysym::Keysym;
 
@@ -40,7 +39,9 @@ pub struct LayoutConfig {
     pub preview_size: Dimensions,
 }
 
-const fn default_item_limit() -> usize { 100 }
+const fn default_item_limit() -> usize {
+    100
+}
 
 impl Default for LayoutConfig {
     fn default() -> Self {
@@ -126,7 +127,10 @@ impl Default for ThemeConfig {
 
 impl Config {
     pub fn load() -> Result<Config> {
-        let config_path = Self::get_config_path();
+        let config_path = dirs::config_dir()
+            .unwrap_or_else(std::env::temp_dir)
+            .join("memoni")
+            .join("config.toml");
 
         if !config_path.exists() {
             return Ok(Config::default());
@@ -137,15 +141,6 @@ impl Config {
             toml::from_str(&config_content).context("Failed to parse config file")?;
 
         Ok(config)
-    }
-
-    fn get_config_path() -> PathBuf {
-        let home_dir = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-        let mut path = PathBuf::from(home_dir);
-        path.push(".config");
-        path.push("memoni");
-        path.push("config.toml");
-        path
     }
 }
 

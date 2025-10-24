@@ -9,6 +9,7 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, anyhow};
+use bincode::{Decode, Encode};
 use x11rb::protocol::{
     Event,
     xfixes::SelectionEventMask,
@@ -53,6 +54,7 @@ x11rb::atom_manager! {
 
 type SelectionData = BTreeMap<String, Vec<u8>>;
 
+#[derive(Encode, Decode)]
 pub struct SelectionItem {
     pub id: u64,
     pub data: SelectionData,
@@ -135,6 +137,7 @@ pub struct Selection<'a> {
 
 impl<'a> Selection<'a> {
     pub fn new(
+        initial_items: VecDeque<SelectionItem>,
         window: &'a X11Window,
         key_converter: Rc<RefCell<X11KeyConverter>>,
         selection_type: SelectionType,
@@ -192,7 +195,7 @@ impl<'a> Selection<'a> {
         )?;
 
         Ok(Selection {
-            items: VecDeque::new(),
+            items: initial_items,
             conn,
             screen: &window.screen,
             key_converter,
