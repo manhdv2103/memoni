@@ -264,8 +264,13 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
                 }
 
                 input.handle_event(&event);
-                if let Some(new_selection_item) = selection.handle_event(&event)? {
-                    ui.build_button_widget(new_selection_item)?;
+                if let Some((new_selection_item, removed_selection_items)) =
+                    selection.handle_event(&event)?
+                {
+                    if let Some(new_item) = new_selection_item {
+                        ui.build_button_widget(new_item)?;
+                    }
+                    ui.remove_button_widgets(removed_selection_items);
                 }
 
                 for input_event in &input.egui_input.events {

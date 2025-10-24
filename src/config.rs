@@ -15,6 +15,9 @@ use xkeysym::Keysym;
 #[derive(Deserialize, Debug, Default)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
+    #[serde(default = "default_item_limit")]
+    pub item_limit: usize,
+
     #[serde_as(as = "HashMap<_, OneOrMany<_>>")]
     pub paste_bindings: HashMap<String, Vec<Binding>>,
     pub layout: LayoutConfig,
@@ -36,6 +39,8 @@ pub struct LayoutConfig {
     pub screen_edge_gap: i32,
     pub preview_size: Dimensions,
 }
+
+const fn default_item_limit() -> usize { 100 }
 
 impl Default for LayoutConfig {
     fn default() -> Self {

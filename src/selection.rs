@@ -209,7 +209,10 @@ impl<'a> Selection<'a> {
         })
     }
 
-    pub fn handle_event(&mut self, event: &Event) -> Result<Option<&SelectionItem>> {
+    pub fn handle_event(
+        &mut self,
+        event: &Event,
+    ) -> Result<Option<(Option<&SelectionItem>, VecDeque<SelectionItem>)>> {
         let conn = self.conn;
         let atoms = self.atoms;
 
@@ -650,7 +653,7 @@ impl<'a> Selection<'a> {
         value: Vec<u8>,
         mime_name: String,
         mime_atom: Atom,
-    ) -> Result<Option<&SelectionItem>> {
+    ) -> Result<Option<(Option<&SelectionItem>, VecDeque<SelectionItem>)>> {
         let mut task = self.request_tasks.remove(&transfer_atom).unwrap();
 
         let RequestTaskState::PendingSelection {
@@ -697,7 +700,13 @@ impl<'a> Selection<'a> {
             data: mem::take(data),
         });
 
-        Ok(self.items.front())
+        let removed = if self.items.len() > self.config.item_limit {
+            self.items.split_off(self.config.item_limit)
+        } else {
+            VecDeque::new()
+        };
+
+        Ok(Some((self.items.front(), removed)))
     }
 
     fn purge_overdue_tasks(&mut self) {

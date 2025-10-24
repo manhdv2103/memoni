@@ -599,6 +599,15 @@ impl<'a> Ui<'a> {
         self.button_widgets.insert(item.id, btn);
         Ok(())
     }
+
+    pub fn remove_button_widgets<I: IntoIterator<Item = SelectionItem>>(
+        &mut self,
+        removed_items: I,
+    ) {
+        for item in removed_items {
+            self.button_widgets.remove(&item.id);
+        }
+    }
 }
 
 fn create_files_thumbnail(
