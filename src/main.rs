@@ -158,6 +158,9 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
         key_converter.clone(),
         args.selection.clone(),
         &config,
+        // XFixes sends a SelectionNotify for each change while the user drags the mouse to adjust selection.
+        // Debounce to merge consecutive items with similar text.
+        args.selection == SelectionType::PRIMARY,
     )?;
 
     let mut ui = Ui::new(&config)?;

@@ -73,12 +73,16 @@ impl fmt::Display for SelectionType {
 
 #[derive(Debug)]
 enum RequestTaskState {
-    TargetsRequest,
+    TargetsRequest {
+        owner: u32,
+    },
     PendingSelection {
+        owner: u32,
         mimes: HashMap<Atom, String>,
         data: SelectionData,
     },
     PendingIncr {
+        owner: u32,
         mimes: HashMap<Atom, String>,
         data: SelectionData,
         current_mime_atom: Atom,
@@ -124,6 +128,7 @@ pub struct Selection<'a> {
     screen: &'a Screen,
     key_converter: Rc<RefCell<X11KeyConverter>>,
     config: &'a Config,
+    merge_consecutive_similar_items: bool,
     selection_atom: Atom,
     atoms: Atoms,
     request_tasks: HashMap<Atom, Task<RequestTaskState>>,
@@ -133,6 +138,7 @@ pub struct Selection<'a> {
     transfer_atoms: AtomPool<'a>,
     mime_atoms: RefCell<HashMap<String, Atom>>,
     paste_item_id: Option<u64>,
+    prev_item_metadata: Option<(u32, Vec<String>, Instant)>,
 }
 
 impl<'a> Selection<'a> {
@@ -142,6 +148,7 @@ impl<'a> Selection<'a> {
         key_converter: Rc<RefCell<X11KeyConverter>>,
         selection_type: SelectionType,
         config: &'a Config,
+        merge_consecutive_similar_items: bool,
     ) -> Result<Self> {
         let conn = &window.conn;
         let root = window.screen.root;
@@ -200,6 +207,7 @@ impl<'a> Selection<'a> {
             screen: &window.screen,
             key_converter,
             config,
+            merge_consecutive_similar_items,
             selection_atom,
             atoms,
             request_tasks: HashMap::new(),
@@ -209,13 +217,14 @@ impl<'a> Selection<'a> {
             transfer_atoms: AtomPool::new(conn, "SELECTION_DATA")?,
             mime_atoms: RefCell::new(HashMap::new()),
             paste_item_id: None,
+            prev_item_metadata: None,
         })
     }
 
     pub fn handle_event(
         &mut self,
         event: &Event,
-    ) -> Result<Option<(Option<&SelectionItem>, VecDeque<SelectionItem>)>> {
+    ) -> Result<Option<(Option<&SelectionItem>, Vec<SelectionItem>)>> {
         let conn = self.conn;
         let atoms = self.atoms;
 
@@ -248,7 +257,7 @@ impl<'a> Selection<'a> {
                     conn.flush()?;
 
                     match task.state {
-                        RequestTaskState::TargetsRequest => {
+                        RequestTaskState::TargetsRequest { owner } => {
                             let property = property.reply()?;
                             if property.type_ == atoms.INCR {
                                 // Ignoring abusive TARGETS property
@@ -304,11 +313,13 @@ impl<'a> Selection<'a> {
                             }
 
                             task.set_state(RequestTaskState::PendingSelection {
+                                owner,
                                 mimes,
                                 data: BTreeMap::new(),
                             });
                         }
                         RequestTaskState::PendingSelection {
+                            owner,
                             ref mut mimes,
                             ref mut data,
                         } => {
@@ -323,6 +334,7 @@ impl<'a> Selection<'a> {
                                 let data = mem::take(data);
 
                                 task.set_state(RequestTaskState::PendingIncr {
+                                    owner,
                                     mimes,
                                     data,
                                     current_mime_atom: ev.target,
@@ -360,8 +372,10 @@ impl<'a> Selection<'a> {
                     )?
                     .check()?;
 
-                    self.request_tasks
-                        .insert(transfer_atom, Task::new(RequestTaskState::TargetsRequest));
+                    self.request_tasks.insert(
+                        transfer_atom,
+                        Task::new(RequestTaskState::TargetsRequest { owner: ev.owner }),
+                    );
                 }
 
                 // Handle receiving INCR selection
@@ -388,6 +402,7 @@ impl<'a> Selection<'a> {
                     };
 
                     let incr_task_state = if let RequestTaskState::PendingIncr {
+                        owner,
                         mimes,
                         data,
                         current_mime_atom,
@@ -396,6 +411,7 @@ impl<'a> Selection<'a> {
                     } = &mut task.state
                     {
                         Some((
+                            *owner,
                             mem::take(mimes),
                             mem::take(data),
                             mem::take(buffer),
@@ -406,8 +422,14 @@ impl<'a> Selection<'a> {
                         None
                     };
 
-                    if let Some((mimes, data, mut buffer, current_mime_name, current_mime_atom)) =
-                        incr_task_state
+                    if let Some((
+                        owner,
+                        mimes,
+                        data,
+                        mut buffer,
+                        current_mime_name,
+                        current_mime_atom,
+                    )) = incr_task_state
                     {
                         let property = conn.get_property(
                             true,
@@ -424,7 +446,7 @@ impl<'a> Selection<'a> {
                         // Empty property signals completion
                         if property.value.is_empty() {
                             self.conn.delete_property(ev.window, transfer_atom)?;
-                            task.state = RequestTaskState::PendingSelection { mimes, data };
+                            task.state = RequestTaskState::PendingSelection { owner, mimes, data };
 
                             return self.process_selection_data(
                                 transfer_atom,
@@ -442,6 +464,7 @@ impl<'a> Selection<'a> {
 
                         buffer.extend_from_slice(&property.value);
                         task.state = RequestTaskState::PendingIncr {
+                            owner,
                             mimes,
                             data,
                             buffer,
@@ -656,10 +679,11 @@ impl<'a> Selection<'a> {
         value: Vec<u8>,
         mime_name: String,
         mime_atom: Atom,
-    ) -> Result<Option<(Option<&SelectionItem>, VecDeque<SelectionItem>)>> {
+    ) -> Result<Option<(Option<&SelectionItem>, Vec<SelectionItem>)>> {
         let mut task = self.request_tasks.remove(&transfer_atom).unwrap();
 
         let RequestTaskState::PendingSelection {
+            owner,
             ref mut data,
             ref mimes,
         } = task.state
@@ -675,7 +699,9 @@ impl<'a> Selection<'a> {
             || (is_plaintext_mime(&mime_name) && value.iter().all(u8::is_ascii_whitespace)))
         {
             data.insert(mime_name.clone(), value);
-            self.mime_atoms.borrow_mut().insert(mime_name, mime_atom);
+            self.mime_atoms
+                .borrow_mut()
+                .insert(mime_name.clone(), mime_atom);
         }
 
         if let Some(&next_atom) = mimes.keys().next() {
@@ -694,6 +720,32 @@ impl<'a> Selection<'a> {
 
         self.transfer_atoms.release(transfer_atom);
 
+
+        let mimes = data.keys().cloned().collect();
+        let mut removed = Vec::new();
+
+        // We only support merge plaintext items without any other type of data
+        if self.merge_consecutive_similar_items
+            && data.len() == 1
+            && is_plaintext_mime(&mime_name)
+            && let Some((prev_owner, ref prev_mimes, prev_time)) = self.prev_item_metadata
+            && prev_owner == owner
+            && prev_mimes.len() == 1
+            && prev_mimes.contains(&mime_name)
+            && prev_time.elapsed() < Duration::from_secs(1)
+        {
+            let prev_item = self
+                .items
+                .front()
+                .expect("prev_item_metadata exists without prev item");
+
+            let current_text = data.get(&mime_name).unwrap();
+            let prev_text = prev_item.data.get(&mime_name).unwrap();
+            if contains(current_text, prev_text) || contains(prev_text, current_text) {
+                removed.push(self.items.pop_front().unwrap());
+            }
+        }
+
         let new_item_id = hash_selection_data(data)?;
         if let Some(idx) = self.items.iter().position(|i| i.id == new_item_id) {
             self.items.remove(idx);
@@ -703,12 +755,11 @@ impl<'a> Selection<'a> {
             data: mem::take(data),
         });
 
-        let removed = if self.items.len() > self.config.item_limit {
-            self.items.split_off(self.config.item_limit)
-        } else {
-            VecDeque::new()
+        if self.items.len() > self.config.item_limit {
+            removed.extend(self.items.split_off(self.config.item_limit));
         };
 
+        self.prev_item_metadata = Some((owner, mimes, Instant::now()));
         Ok(Some((self.items.front(), removed)))
     }
 
@@ -896,4 +947,9 @@ fn hash_selection_data(data: &SelectionData) -> Result<u64> {
     let hash = ahash::RandomState::with_seed(HASH_SEED).hash_one(&data_bin);
 
     Ok(hash)
+}
+
+// Dumb algorithm here is fine I guess
+fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack.windows(needle.len()).any(|w| w == needle)
 }
