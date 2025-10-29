@@ -151,19 +151,19 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
     let mut gl_context = unsafe { OpenGLContext::new(&window, &config)? };
     let key_converter = Rc::new(RefCell::new(X11KeyConverter::new(&window.conn)?));
     let mut input = Input::new(&window, key_converter.clone())?;
-    let persistence = Persistence::new(args.selection.clone())?;
+    let persistence = Persistence::new(args.selection)?;
     let mut selection = Selection::new(
         persistence.load_selection_items()?,
         &window,
         key_converter.clone(),
-        args.selection.clone(),
+        args.selection,
         &config,
         // XFixes sends a SelectionNotify for each change while the user drags the mouse to adjust selection.
         // Debounce to merge consecutive items with similar text.
         args.selection == SelectionType::PRIMARY,
     )?;
 
-    let mut ui = Ui::new(&config)?;
+    let mut ui = Ui::new(&config, args.selection)?;
     for item in &selection.items {
         ui.build_button_widget(item)?;
     }

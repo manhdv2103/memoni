@@ -16,6 +16,7 @@ use xkeysym::Keysym;
 pub struct Config {
     #[serde(default = "default_item_limit")]
     pub item_limit: usize,
+    pub selection_type_ribbon: bool,
 
     #[serde_as(as = "HashMap<_, OneOrMany<_>>")]
     pub paste_bindings: HashMap<String, Vec<Binding>>,
@@ -37,6 +38,7 @@ pub struct LayoutConfig {
     pub pointer_gap: i32,
     pub screen_edge_gap: i32,
     pub preview_size: Dimensions,
+    pub selection_type_ribbon_size: f32,
 }
 
 const fn default_item_limit() -> usize {
@@ -62,6 +64,7 @@ impl Default for LayoutConfig {
                 width: 105,
                 height: 70,
             },
+            selection_type_ribbon_size: 70.0,
         }
     }
 }
@@ -108,6 +111,10 @@ pub struct ThemeConfig {
     pub scroll_handle: Color,
     #[serde_as(as = "DisplayFromStr")]
     pub preview_background: Color,
+    #[serde_as(as = "DisplayFromStr")]
+    pub clipboard_selection_ribbon_color: Color,
+    #[serde_as(as = "DisplayFromStr")]
+    pub primary_selection_ribbon_color: Color,
 }
 
 impl Default for ThemeConfig {
@@ -121,6 +128,8 @@ impl Default for ThemeConfig {
             scroll_background: Color(0xff0a0a0a),
             scroll_handle: Color(0xffbbbbbb),
             preview_background: Color(0x77222222),
+            clipboard_selection_ribbon_color: Color(0x550000ff),
+            primary_selection_ribbon_color: Color(0x30ff0000),
         }
     }
 }

@@ -9,8 +9,8 @@ use std::{
 
 use anyhow::{Result, anyhow};
 use egui::{
-    Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontTweak, FullOutput, RawInput,
-    RichText, Stroke, TextureHandle, Vec2, scroll_area::ScrollAreaOutput,
+    Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontTweak, FullOutput, Painter,
+    RawInput, Rect, RichText, Stroke, TextureHandle, Vec2, epaint, scroll_area::ScrollAreaOutput,
 };
 use fontconfig::Fontconfig;
 use image::{GenericImageView, RgbaImage};
@@ -19,7 +19,7 @@ use xdg_mime::SharedMimeInfo;
 use crate::{
     config::{Config, Dimensions, LayoutConfig},
     freedesktop_cache::get_cached_thumbnail,
-    selection::SelectionItem,
+    selection::{SelectionItem, SelectionType},
     utils::{is_image_mime, is_plaintext_mime, percent_decode, utf16le_to_string},
     widgets::clipboard_button::ClipboardButton,
 };
@@ -57,6 +57,7 @@ struct Fallback {
 pub struct Ui<'a> {
     pub egui_ctx: egui::Context,
     config: &'a Config,
+    selection_type: SelectionType,
     item_ids: Vec<egui::Id>,
     hovered_idx: Option<usize>,
     active_idx: usize,
@@ -68,7 +69,7 @@ pub struct Ui<'a> {
 }
 
 impl<'a> Ui<'a> {
-    pub fn new(config: &'a Config) -> Result<Self> {
+    pub fn new(config: &'a Config, selection_type: SelectionType) -> Result<Self> {
         let egui_ctx = egui::Context::default();
         let layout = &config.layout;
         let font = &config.font;
@@ -129,6 +130,7 @@ impl<'a> Ui<'a> {
         Ok(Ui {
             egui_ctx,
             config,
+            selection_type,
             item_ids: vec![],
             hovered_idx: None,
             active_idx: 0,
@@ -306,8 +308,8 @@ impl<'a> Ui<'a> {
 
             self.item_ids.clear();
 
-            let container_result = Self::container(ctx, self.config, next_scroll_offset,
-                self.shows_scroll_bar, |ui| {
+            let container_result = Self::container(ctx, self.config, self.selection_type,
+                next_scroll_offset, self.shows_scroll_bar, |ui| {
 
                     if selection_items.is_empty() {
                         ui.centered_and_justified(|ui| {
@@ -380,6 +382,7 @@ impl<'a> Ui<'a> {
     fn container(
         ctx: &egui::Context,
         config: &Config,
+        selection_type: SelectionType,
         scroll_offset: Option<f32>,
         shows_scroll_bar: bool,
         add_contents: impl FnOnce(&mut egui::Ui) -> Result<()>,
@@ -396,6 +399,19 @@ impl<'a> Ui<'a> {
         egui::CentralPanel::default()
             .frame(egui::Frame::new())
             .show(ctx, |ui| {
+                if config.selection_type_ribbon {
+                    Self::draw_ribbon(
+                        ui.painter(),
+                        &ui.min_rect(),
+                        config.layout.selection_type_ribbon_size,
+                        if selection_type == SelectionType::PRIMARY {
+                            config.theme.primary_selection_ribbon_color
+                        } else {
+                            config.theme.clipboard_selection_ribbon_color
+                        },
+                    );
+                }
+
                 let scroll_bar_rect = egui::Rect::from_min_max(
                     ui.min_rect().min + egui::vec2(0.0, scroll_bar_margin),
                     ui.max_rect().max - egui::vec2(0.0, scroll_bar_margin),
@@ -442,6 +458,23 @@ impl<'a> Ui<'a> {
             None => Ok(scroll_area_output.unwrap()),
             Some(e) => Err(e),
         }
+    }
+
+    fn draw_ribbon(painter: &Painter, container_rect: &Rect, size: f32, color: impl Into<Color32>) {
+        let mut points = [
+            egui::pos2(-size, 0.0),
+            egui::pos2(0.0, 0.0),
+            egui::pos2(0.0, size),
+        ];
+        for p in &mut points {
+            p.x += container_rect.width();
+        }
+
+        painter.add(epaint::Shape::convex_polygon(
+            points.to_vec(),
+            color,
+            Stroke::NONE,
+        ));
     }
 
     pub fn build_button_widget(&mut self, item: &SelectionItem) -> Result<()> {
