@@ -694,10 +694,8 @@ impl<'a> Selection<'a> {
             );
         };
 
-        // Dropping empty or blank selection
-        if !(value.is_empty()
-            || (is_plaintext_mime(&mime_name) && value.iter().all(u8::is_ascii_whitespace)))
-        {
+        // Dropping empty selection
+        if !value.is_empty() {
             data.insert(mime_name.clone(), value);
             self.mime_atoms
                 .borrow_mut()
@@ -720,6 +718,7 @@ impl<'a> Selection<'a> {
 
         self.transfer_atoms.release(transfer_atom);
 
+        // Ignoring selection with empty data
         if data.is_empty() {
             return Ok(None);
         }
