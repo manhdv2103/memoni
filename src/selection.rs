@@ -54,7 +54,7 @@ x11rb::atom_manager! {
 
 type SelectionData = BTreeMap<String, Vec<u8>>;
 
-#[derive(Encode, Decode)]
+#[derive(Debug, Encode, Decode)]
 pub struct SelectionItem {
     pub id: u64,
     pub data: SelectionData,
@@ -719,7 +719,6 @@ impl<'a> Selection<'a> {
         }
 
         self.transfer_atoms.release(transfer_atom);
-
 
         let mimes = data.keys().cloned().collect();
         let mut removed = Vec::new();
