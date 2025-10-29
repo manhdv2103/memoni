@@ -138,7 +138,7 @@ pub struct Selection<'a> {
     transfer_atoms: AtomPool<'a>,
     mime_atoms: RefCell<HashMap<String, Atom>>,
     paste_item_id: Option<u64>,
-    prev_item_metadata: Option<(u32, Vec<String>, Instant)>,
+    prev_item_metadata: Option<(u32, Instant, bool)>,
 }
 
 impl<'a> Selection<'a> {
@@ -724,46 +724,54 @@ impl<'a> Selection<'a> {
             return Ok(None);
         }
 
-        let mimes = data.keys().cloned().collect();
+        let prev_item = self.items.front();
+        let new_item_id = hash_selection_data(data)?;
         let mut removed = Vec::new();
 
         // We only support merge plaintext items without any other type of data
         if self.merge_consecutive_similar_items
-            && data.len() == 1
-            && is_plaintext_mime(&mime_name)
-            && let Some((prev_owner, ref prev_mimes, prev_time)) = self.prev_item_metadata
+            && let Some((prev_owner, prev_time, is_previously_seen)) = self.prev_item_metadata
             && prev_owner == owner
-            && prev_mimes.len() == 1
-            && prev_mimes.contains(&mime_name)
             && prev_time.elapsed() < Duration::from_secs(1)
+            // ---
+            // If the item has existed before, we should not merge it
+            && !is_previously_seen
+            // ---
+            && data.len() == 1
+            && let (mime, new_text) = data.iter().next().unwrap()
+            && is_plaintext_mime(mime)
+            // ---
+            && let Some(prev_item) = prev_item
+            && prev_item.data.len() == 1
+            && let Some(prev_text) = prev_item.data.get(mime)
+            // ---
+            && (contains(new_text, prev_text) || contains(prev_text, new_text))
         {
-            let prev_item = self
-                .items
-                .front()
-                .expect("prev_item_metadata exists without prev item");
-
-            let current_text = data.get(&mime_name).unwrap();
-            let prev_text = prev_item.data.get(&mime_name).unwrap();
-            if contains(current_text, prev_text) || contains(prev_text, current_text) {
-                removed.push(self.items.pop_front().unwrap());
-            }
+            removed.push(self.items.pop_front().unwrap());
         }
 
-        let new_item_id = hash_selection_data(data)?;
+        let mut is_previously_seen = false;
+        let mut new_item = None;
         if let Some(idx) = self.items.iter().position(|i| i.id == new_item_id) {
-            self.items.remove(idx);
+            let previous_seen_item = self.items.remove(idx).unwrap();
+            self.items.push_front(previous_seen_item);
+
+            is_previously_seen = true;
+        } else {
+            self.items.push_front(SelectionItem {
+                id: new_item_id,
+                data: mem::take(data),
+            });
+
+            if self.items.len() > self.config.item_limit {
+                removed.extend(self.items.split_off(self.config.item_limit));
+            };
+
+            new_item = self.items.front();
         }
-        self.items.push_front(SelectionItem {
-            id: new_item_id,
-            data: mem::take(data),
-        });
 
-        if self.items.len() > self.config.item_limit {
-            removed.extend(self.items.split_off(self.config.item_limit));
-        };
-
-        self.prev_item_metadata = Some((owner, mimes, Instant::now()));
-        Ok(Some((self.items.front(), removed)))
+        self.prev_item_metadata = Some((owner, Instant::now(), is_previously_seen));
+        Ok(Some((new_item, removed)))
     }
 
     fn purge_overdue_tasks(&mut self) {
