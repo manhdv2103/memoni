@@ -173,9 +173,9 @@ impl<'a> X11Window<'a> {
     }
 
     pub fn grab_input(&self) -> Result<()> {
-        let mut grab_keyboard_success = false;
         // Have to repeatedly retry because if memoni is triggered from a window manager (e.g. i3)
         // keymap, the WM is probably still grabbing the keyboard and not ungrabbing immediately
+        let mut grab_keyboard_success = false;
         for _ in 0..100 {
             let grab_keyboard = self.conn.grab_keyboard(
                 true,
@@ -194,17 +194,28 @@ impl<'a> X11Window<'a> {
             eprintln!("Warning: failed to grab keyboard");
         }
 
-        let grab_pointer = self.conn.grab_pointer(
-            true,
-            self.screen.root,
-            EventMask::BUTTON_RELEASE | EventMask::BUTTON_MOTION | EventMask::POINTER_MOTION,
-            GrabMode::ASYNC,
-            GrabMode::ASYNC,
-            self.screen.root,
-            x11rb::NONE,
-            x11rb::CURRENT_TIME,
-        )?;
-        grab_pointer.reply()?;
+        // Same reason as above, just applied to pointer keymaps
+        let mut grab_pointer_success = false;
+        for _ in 0..100 {
+            let grab_pointer = self.conn.grab_pointer(
+                true,
+                self.screen.root,
+                EventMask::BUTTON_RELEASE | EventMask::BUTTON_MOTION | EventMask::POINTER_MOTION,
+                GrabMode::ASYNC,
+                GrabMode::ASYNC,
+                self.screen.root,
+                x11rb::NONE,
+                x11rb::CURRENT_TIME,
+            )?;
+            if grab_pointer.reply()?.status == GrabStatus::SUCCESS {
+                grab_pointer_success = true;
+                break;
+            }
+            thread::sleep(time::Duration::from_millis(10));
+        }
+        if !grab_pointer_success {
+            eprintln!("Warning: failed to grab pointer");
+        }
 
         Ok(())
     }
@@ -297,10 +308,11 @@ impl<'a> X11Window<'a> {
         // Or the pointer is hidden, center the window instead of placing it at the pointer to avoid disorienting the user.
         if !always_follows_pointer
             && let Some(fm) = focused_monitor
-            && (!pointer_visible || pointer_monitor
-                .as_ref()
-                .map(|pm| fm.name != pm.name)
-                .unwrap_or(true))
+            && (!pointer_visible
+                || pointer_monitor
+                    .as_ref()
+                    .map(|pm| fm.name != pm.name)
+                    .unwrap_or(true))
         {
             let x = (fm.width as i32 - width) / 2 + fm.x as i32;
             let y = (fm.height as i32 - height) / 2 + fm.y as i32;
