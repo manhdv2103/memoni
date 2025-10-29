@@ -720,6 +720,10 @@ impl<'a> Selection<'a> {
 
         self.transfer_atoms.release(transfer_atom);
 
+        if data.is_empty() {
+            return Ok(None);
+        }
+
         let mimes = data.keys().cloned().collect();
         let mut removed = Vec::new();
 
