@@ -88,19 +88,20 @@ impl<'a> X11Window<'a> {
             &win_aux,
         )?;
 
+        let wm_name = format!("Memoni - {}", selection_type).into_bytes();
         conn.change_property8(
             PropMode::REPLACE,
             win_id,
             AtomEnum::WM_NAME,
             AtomEnum::STRING,
-            b"Memoni",
+            &wm_name,
         )?;
         conn.change_property8(
             PropMode::REPLACE,
             win_id,
             atoms._NET_WM_NAME,
             atoms.UTF8_STRING,
-            b"Memoni",
+            &wm_name,
         )?;
         conn.change_property8(
             PropMode::REPLACE,
