@@ -147,7 +147,11 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
     let socket_path = socket_dir.join(format!("{}.sock", args.selection));
     let config = Config::load(args.selection)?;
 
-    let window = X11Window::new(&config, args.selection == SelectionType::PRIMARY)?;
+    let window = X11Window::new(
+        &config,
+        args.selection,
+        args.selection == SelectionType::PRIMARY,
+    )?;
     let mut gl_context = unsafe { OpenGLContext::new(&window, &config)? };
     let key_converter = Rc::new(RefCell::new(X11KeyConverter::new(&window.conn)?));
     let mut input = Input::new(&window, key_converter.clone())?;

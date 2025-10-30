@@ -13,6 +13,7 @@ use x11rb::wrapper::ConnectionExt as _;
 use x11rb::xcb_ffi::XCBConnection;
 
 use crate::config::{Config, Dimensions, LayoutConfig};
+use crate::selection::SelectionType;
 
 x11rb::atom_manager! {
     pub Atoms: AtomsCookie {
@@ -50,7 +51,11 @@ pub struct X11Window<'a> {
 }
 
 impl<'a> X11Window<'a> {
-    pub fn new(config: &'a Config, always_follows_pointer: bool) -> Result<Self> {
+    pub fn new(
+        config: &'a Config,
+        selection_type: SelectionType,
+        always_follows_pointer: bool,
+    ) -> Result<Self> {
         let (conn, screen_num) = XCBConnection::connect(None)?;
         let setup = conn.setup();
         let screen = setup.roots[screen_num].to_owned();
@@ -102,7 +107,11 @@ impl<'a> X11Window<'a> {
             win_id,
             AtomEnum::WM_CLASS,
             AtomEnum::STRING,
-            b"memoni\0Memoni\0",
+            &format!(
+                "memoni-{}\0Memoni\0",
+                selection_type.to_string().to_lowercase()
+            )
+            .into_bytes(),
         )?;
 
         conn.change_property32(
