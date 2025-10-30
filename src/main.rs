@@ -145,7 +145,7 @@ fn client(args: ClientArgs, socket_dir: &Path) -> Result<()> {
 
 fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
     let socket_path = socket_dir.join(format!("{}.sock", args.selection));
-    let config = Config::load()?;
+    let config = Config::load(args.selection)?;
 
     let window = X11Window::new(&config, args.selection == SelectionType::PRIMARY)?;
     let mut gl_context = unsafe { OpenGLContext::new(&window, &config)? };
@@ -163,7 +163,7 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
         args.selection == SelectionType::PRIMARY,
     )?;
 
-    let mut ui = Ui::new(&config, args.selection)?;
+    let mut ui = Ui::new(&config)?;
     for item in &selection.items {
         ui.build_button_widget(item)?;
     }

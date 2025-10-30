@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use egui::Color32;
 use egui::ecolor::ParseHexColorError;
+use make_optional::MakeOptional;
 use serde::Deserialize;
 use serde_with::{DisplayFromStr, FromInto, OneOrMany, serde_as};
 use std::collections::HashMap;
@@ -10,21 +11,56 @@ use std::ops::Deref;
 use std::str::FromStr;
 use xkeysym::Keysym;
 
-#[serde_as]
+use crate::selection::SelectionType;
+
 #[derive(Deserialize, Debug, Default)]
 #[serde(default, deny_unknown_fields)]
+struct ConfigSet {
+    #[serde(flatten)]
+    common: OptionalConfig,
+
+    #[serde(rename = "Clipboard")]
+    clipboard: OptionalConfig,
+
+    #[serde(rename = "Primary")]
+    primary: OptionalConfig,
+}
+
+#[derive(MakeOptional)]
+#[optional(derive(Default), vis())]
+#[serde_as]
+#[derive(Deserialize, Debug)]
+#[serde(default, deny_unknown_fields)]
 pub struct Config {
-    #[serde(default = "default_item_limit")]
     pub item_limit: usize,
-    pub selection_type_ribbon: bool,
+    pub show_ribbon: bool,
 
     #[serde_as(as = "HashMap<_, OneOrMany<_>>")]
     pub paste_bindings: HashMap<String, Vec<Binding>>,
+
+    #[optional(optional_type)]
     pub layout: LayoutConfig,
+    #[optional(optional_type)]
     pub font: FontConfig,
+    #[optional(optional_type)]
     pub theme: ThemeConfig,
 }
 
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            item_limit: 100,
+            show_ribbon: false,
+            paste_bindings: Default::default(),
+            layout: Default::default(),
+            font: Default::default(),
+            theme: Default::default(),
+        }
+    }
+}
+
+#[derive(MakeOptional)]
+#[optional(derive(Default), vis())]
 #[derive(Deserialize, Debug)]
 #[serde(default, deny_unknown_fields)]
 pub struct LayoutConfig {
@@ -38,11 +74,7 @@ pub struct LayoutConfig {
     pub pointer_gap: i32,
     pub screen_edge_gap: i32,
     pub preview_size: Dimensions,
-    pub selection_type_ribbon_size: f32,
-}
-
-const fn default_item_limit() -> usize {
-    100
+    pub ribbon_size: f32,
 }
 
 impl Default for LayoutConfig {
@@ -64,11 +96,13 @@ impl Default for LayoutConfig {
                 width: 105,
                 height: 70,
             },
-            selection_type_ribbon_size: 70.0,
+            ribbon_size: 70.0,
         }
     }
 }
 
+#[derive(MakeOptional)]
+#[optional(derive(Default), vis())]
 #[derive(Deserialize, Debug)]
 #[serde(default, deny_unknown_fields)]
 pub struct FontConfig {
@@ -91,6 +125,8 @@ impl Default for FontConfig {
     }
 }
 
+#[derive(MakeOptional)]
+#[optional(derive(Default), vis())]
 #[serde_as]
 #[derive(Deserialize, Debug)]
 #[serde(default, deny_unknown_fields)]
@@ -112,9 +148,7 @@ pub struct ThemeConfig {
     #[serde_as(as = "DisplayFromStr")]
     pub preview_background: Color,
     #[serde_as(as = "DisplayFromStr")]
-    pub clipboard_selection_ribbon_color: Color,
-    #[serde_as(as = "DisplayFromStr")]
-    pub primary_selection_ribbon_color: Color,
+    pub ribbon: Color,
 }
 
 impl Default for ThemeConfig {
@@ -128,26 +162,57 @@ impl Default for ThemeConfig {
             scroll_background: Color(0xff0a0a0a),
             scroll_handle: Color(0xffbbbbbb),
             preview_background: Color(0x77222222),
-            clipboard_selection_ribbon_color: Color(0x550000ff),
-            primary_selection_ribbon_color: Color(0x30ff0000),
+            ribbon: Color(0x55ffffff),
         }
     }
 }
 
+fn default_clipboard_config() -> OptionalConfig {
+    OptionalConfig {
+        theme: Some(OptionalThemeConfig {
+            ribbon: Some(Color(0x550000ff)),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+}
+
+fn default_primary_config() -> OptionalConfig {
+    OptionalConfig {
+        theme: Some(OptionalThemeConfig {
+            ribbon: Some(Color(0x30ff0000)),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+}
+
 impl Config {
-    pub fn load() -> Result<Config> {
+    pub fn load(selection_type: SelectionType) -> Result<Config> {
+        let default_config = Config::default().with_optional(match selection_type {
+            SelectionType::CLIPBOARD => default_clipboard_config(),
+            SelectionType::PRIMARY => default_primary_config(),
+        });
+
         let config_path = dirs::config_dir()
             .unwrap_or_else(std::env::temp_dir)
             .join("memoni")
             .join("config.toml");
 
         if !config_path.exists() {
-            return Ok(Config::default());
+            return Ok(default_config);
         }
 
         let config_content = fs::read_to_string(&config_path)?;
-        let config: Config =
+        let config_set: ConfigSet =
             toml::from_str(&config_content).context("Failed to parse config file")?;
+
+        let config = default_config
+            .with_optional(config_set.common)
+            .with_optional(match selection_type {
+                SelectionType::CLIPBOARD => config_set.clipboard,
+                SelectionType::PRIMARY => config_set.primary,
+            });
 
         Ok(config)
     }
