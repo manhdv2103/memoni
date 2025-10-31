@@ -48,6 +48,10 @@ x11rb::atom_manager! {
         SAVE_TARGETS,
         MULTIPLE,
 
+        DELETE,
+        INSERT_PROPERTY,
+        INSERT_SELECTION,
+
         _NET_WM_NAME,
     }
 }
@@ -271,12 +275,17 @@ impl<'a> Selection<'a> {
 
                             let mut atom_cookies = Vec::new();
                             for atom in value {
-                                // Special atoms
                                 if [
+                                    // Special targets
                                     atoms.TIMESTAMP,
                                     atoms.TARGETS,
                                     atoms.SAVE_TARGETS,
                                     atoms.MULTIPLE,
+
+                                    // Targets with side effects
+                                    atoms.DELETE,
+                                    atoms.INSERT_SELECTION,
+                                    atoms.INSERT_PROPERTY,
                                 ]
                                 .contains(&atom)
                                 {
