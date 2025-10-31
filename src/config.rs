@@ -19,10 +19,10 @@ struct ConfigSet {
     #[serde(flatten)]
     common: OptionalConfig,
 
-    #[serde(rename = "Clipboard")]
+    #[serde(rename = "CLIPBOARD")]
     clipboard: OptionalConfig,
 
-    #[serde(rename = "Primary")]
+    #[serde(rename = "PRIMARY")]
     primary: OptionalConfig,
 }
 
