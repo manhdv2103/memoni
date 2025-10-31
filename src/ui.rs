@@ -77,7 +77,7 @@ impl<'a> Ui<'a> {
         egui_ctx.style_mut(|style| {
             // style.debug.debug_on_hover = true;
             style.spacing.button_padding = layout.button_padding.into();
-            style.spacing.item_spacing = layout.item_spacing.into();
+            style.spacing.item_spacing = layout.button_spacing.into();
             style.interaction.selectable_labels = false;
 
             style.visuals.override_text_color = Some(theme.foreground.into());
