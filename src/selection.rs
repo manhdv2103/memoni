@@ -22,8 +22,8 @@ use x11rb::{connection::RequestConnection as _, protocol::xtest::ConnectionExt a
 use xkeysym::Keysym;
 
 use crate::{
-    atom_pool::AtomPool,
     config::{Binding, Config, Modifier},
+    transfer_window_pool::{TransferWindow, TransferWindowPool},
     utils::{image_mime_score, is_image_mime, is_plaintext_mime, plaintext_mime_score},
     x11_key_converter::X11KeyConverter,
     x11_window::X11Window,
@@ -57,6 +57,7 @@ x11rb::atom_manager! {
 }
 
 type SelectionData = BTreeMap<String, Vec<u8>>;
+type Owner = u32;
 
 #[derive(Debug, Encode, Decode)]
 pub struct SelectionItem {
@@ -77,16 +78,12 @@ impl fmt::Display for SelectionType {
 
 #[derive(Debug)]
 enum RequestTaskState {
-    TargetsRequest {
-        owner: u32,
-    },
+    TargetsRequest,
     PendingSelection {
-        owner: u32,
         mimes: HashMap<Atom, String>,
         data: SelectionData,
     },
     PendingIncr {
-        owner: u32,
         mimes: HashMap<Atom, String>,
         data: SelectionData,
         current_mime_atom: Atom,
@@ -106,15 +103,17 @@ enum IncrPasteTaskState {
 }
 
 #[derive(Debug)]
-struct Task<S> {
+struct Task<S, M = ()> {
     state: S,
+    metadata: M,
     last_update: Instant,
 }
 
-impl<S> Task<S> {
-    fn new(state: S) -> Self {
+impl<S, M> Task<S, M> {
+    fn new(state: S, metadata: M) -> Self {
         Task {
             state,
+            metadata,
             last_update: Instant::now(),
         }
     }
@@ -135,11 +134,10 @@ pub struct Selection<'a> {
     merge_consecutive_similar_items: bool,
     selection_atom: Atom,
     atoms: Atoms,
-    request_tasks: HashMap<Atom, Task<RequestTaskState>>,
+    request_tasks: HashMap<Window, Task<RequestTaskState, (Atom, Owner)>>,
     incr_paste_tasks: HashMap<(Window, Atom), Task<IncrPasteTaskState>>,
-    transfer_window: Window,
     paste_window: Window,
-    transfer_atoms: AtomPool<'a>,
+    transfer_windows: TransferWindowPool<'a>,
     mime_atoms: RefCell<HashMap<String, Atom>>,
     paste_item_id: Option<u64>,
     prev_item_metadata: Option<(u32, Instant, bool)>,
@@ -168,36 +166,6 @@ impl<'a> Selection<'a> {
             SelectionType::CLIPBOARD => atoms.CLIPBOARD,
         };
 
-        let create_util_window = |title: &[u8], aux, kind| -> Result<_> {
-            let win_id = conn.generate_id()?;
-            conn.create_window(
-                x11rb::COPY_DEPTH_FROM_PARENT,
-                win_id,
-                root,
-                0,
-                0,
-                1,
-                1,
-                0,
-                kind,
-                x11rb::COPY_FROM_PARENT,
-                &aux,
-            )?;
-            conn.change_property8(
-                PropMode::REPLACE,
-                win_id,
-                window.atoms._NET_WM_NAME,
-                window.atoms.UTF8_STRING,
-                title,
-            )?;
-            Ok(win_id)
-        };
-        let transfer_window = create_util_window(
-            b"Memoni transfer window",
-            CreateWindowAux::default().event_mask(EventMask::PROPERTY_CHANGE),
-            WindowClass::INPUT_ONLY,
-        )?;
-
         xfixes::select_selection_input(
             conn,
             root,
@@ -216,9 +184,8 @@ impl<'a> Selection<'a> {
             atoms,
             request_tasks: HashMap::new(),
             incr_paste_tasks: HashMap::new(),
-            transfer_window,
             paste_window: window.win_id,
-            transfer_atoms: AtomPool::new(conn, "SELECTION_DATA")?,
+            transfer_windows: TransferWindowPool::new(conn, root)?,
             mime_atoms: RefCell::new(HashMap::new()),
             paste_item_id: None,
             prev_item_metadata: None,
@@ -235,33 +202,59 @@ impl<'a> Selection<'a> {
         'blk: {
             match event {
                 // Capture copied data
+                Event::XfixesSelectionNotify(ev) => {
+                    if ev.owner == self.paste_window {
+                        break 'blk;
+                    }
+
+                    let transfer_window = self.transfer_windows.get()?;
+                    conn.convert_selection(
+                        transfer_window.id,
+                        ev.selection,
+                        atoms.TARGETS,
+                        transfer_window.atom,
+                        x11rb::CURRENT_TIME,
+                    )?
+                    .check()?;
+
+                    self.request_tasks.insert(
+                        transfer_window.id,
+                        Task::new(
+                            RequestTaskState::TargetsRequest,
+                            (transfer_window.atom, ev.owner),
+                        ),
+                    );
+                }
                 Event::SelectionNotify(ev) => {
-                    if ev.requestor != self.transfer_window {
-                        break 'blk;
-                    }
-
-                    // Conversion request failed
-                    let transfer_atom = ev.property;
-                    if transfer_atom == x11rb::NONE {
-                        break 'blk;
-                    }
-
-                    let Some(task) = self.request_tasks.get_mut(&transfer_atom) else {
+                    let transfer_window = ev.requestor;
+                    let Some(task) = self.request_tasks.get_mut(&transfer_window) else {
+                        //  Ignoring selection notify to unknown requestor
                         break 'blk;
                     };
+                    let (transfer_atom, owner) = task.metadata;
 
-                    let property = conn.get_property(
-                        true,
-                        ev.requestor,
-                        ev.property,
-                        GetPropertyType::ANY,
-                        0,
-                        u32::MAX,
-                    )?;
-                    conn.flush()?;
+                    let property = if ev.property == x11rb::NONE {
+                        None
+                    } else {
+                        let prop = conn.get_property(
+                            true,
+                            ev.requestor,
+                            ev.property,
+                            GetPropertyType::ANY,
+                            0,
+                            u32::MAX,
+                        )?;
+                        conn.flush()?;
+                        Some(prop)
+                    };
 
                     match task.state {
-                        RequestTaskState::TargetsRequest { owner } => {
+                        RequestTaskState::TargetsRequest => {
+                            let Some(property) = property else {
+                                // Targets request failed
+                                break 'blk;
+                            };
+
                             let property = property.reply()?;
                             if property.type_ == atoms.INCR {
                                 // Ignoring abusive TARGETS property
@@ -281,7 +274,6 @@ impl<'a> Selection<'a> {
                                     atoms.TARGETS,
                                     atoms.SAVE_TARGETS,
                                     atoms.MULTIPLE,
-
                                     // Targets with side effects
                                     atoms.DELETE,
                                     atoms.INSERT_SELECTION,
@@ -312,7 +304,7 @@ impl<'a> Selection<'a> {
 
                             if let Some(&target_atom) = mimes.keys().next() {
                                 conn.convert_selection(
-                                    self.transfer_window,
+                                    transfer_window,
                                     ev.selection,
                                     target_atom,
                                     transfer_atom,
@@ -322,28 +314,29 @@ impl<'a> Selection<'a> {
                             }
 
                             task.set_state(RequestTaskState::PendingSelection {
-                                owner,
                                 mimes,
                                 data: BTreeMap::new(),
                             });
                         }
                         RequestTaskState::PendingSelection {
-                            owner,
                             ref mut mimes,
                             ref mut data,
                         } => {
-                            let Some(mime_name) = mimes.remove(&ev.target) else {
-                                // Not a pending target
-                                break 'blk;
+                            let mime_name = mimes.remove(&ev.target);
+                            let (property_type, property_value) = if let Some(property) = property {
+                                let prop_rep = property.reply()?;
+                                (prop_rep.type_, prop_rep.value)
+                            } else {
+                                (x11rb::NONE, vec![])
                             };
 
-                            let property = property.reply()?;
-                            if property.type_ == atoms.INCR {
+                            if property_type == atoms.INCR
+                                && let Some(mime_name) = mime_name
+                            {
                                 let mimes = mem::take(mimes);
                                 let data = mem::take(data);
 
                                 task.set_state(RequestTaskState::PendingIncr {
-                                    owner,
                                     mimes,
                                     data,
                                     current_mime_atom: ev.target,
@@ -355,36 +348,20 @@ impl<'a> Selection<'a> {
                             }
 
                             return self.process_selection_data(
-                                transfer_atom,
-                                property.value,
+                                TransferWindow {
+                                    id: transfer_window,
+                                    atom: transfer_atom,
+                                },
+                                property_value,
                                 mime_name,
                                 ev.target,
+                                owner,
                             );
                         }
                         RequestTaskState::PendingIncr { .. } => {
                             unreachable!("PendingIncr should only be handled in PropertyNotify");
                         }
                     };
-                }
-                Event::XfixesSelectionNotify(ev) => {
-                    if ev.owner == self.paste_window {
-                        break 'blk;
-                    }
-
-                    let transfer_atom = self.transfer_atoms.get()?;
-                    conn.convert_selection(
-                        self.transfer_window,
-                        ev.selection,
-                        atoms.TARGETS,
-                        transfer_atom,
-                        x11rb::CURRENT_TIME,
-                    )?
-                    .check()?;
-
-                    self.request_tasks.insert(
-                        transfer_atom,
-                        Task::new(RequestTaskState::TargetsRequest { owner: ev.owner }),
-                    );
                 }
 
                 // Handle receiving INCR selection
@@ -401,17 +378,14 @@ impl<'a> Selection<'a> {
                         break 'blk;
                     }
 
-                    if ev.window != self.transfer_window {
-                        break 'blk;
-                    }
-
-                    let transfer_atom = ev.atom;
-                    let Some(task) = self.request_tasks.get_mut(&transfer_atom) else {
+                    let transfer_window = ev.window;
+                    let Some(task) = self.request_tasks.get_mut(&transfer_window) else {
+                        //  Ignoring property notify to unknown requestor
                         break 'blk;
                     };
+                    let (transfer_atom, owner) = task.metadata;
 
                     let incr_task_state = if let RequestTaskState::PendingIncr {
-                        owner,
                         mimes,
                         data,
                         current_mime_atom,
@@ -420,7 +394,6 @@ impl<'a> Selection<'a> {
                     } = &mut task.state
                     {
                         Some((
-                            *owner,
                             mem::take(mimes),
                             mem::take(data),
                             mem::take(buffer),
@@ -431,14 +404,8 @@ impl<'a> Selection<'a> {
                         None
                     };
 
-                    if let Some((
-                        owner,
-                        mimes,
-                        data,
-                        mut buffer,
-                        current_mime_name,
-                        current_mime_atom,
-                    )) = incr_task_state
+                    if let Some((mimes, data, mut buffer, current_mime_name, current_mime_atom)) =
+                        incr_task_state
                     {
                         let property = conn.get_property(
                             true,
@@ -455,25 +422,28 @@ impl<'a> Selection<'a> {
                         // Empty property signals completion
                         if property.value.is_empty() {
                             self.conn.delete_property(ev.window, transfer_atom)?;
-                            task.state = RequestTaskState::PendingSelection { owner, mimes, data };
+                            task.state = RequestTaskState::PendingSelection { mimes, data };
 
                             return self.process_selection_data(
-                                transfer_atom,
+                                TransferWindow {
+                                    id: transfer_window,
+                                    atom: transfer_atom,
+                                },
                                 buffer,
-                                current_mime_name,
+                                Some(current_mime_name),
                                 current_mime_atom,
+                                owner,
                             );
                         }
 
                         if buffer.len() + property.value.len() > MAX_INCR_SIZE {
                             eprintln!("Warning: INCR transfer exceeds size limit, aborting");
-                            self.request_tasks.remove(&transfer_atom);
+                            self.request_tasks.remove(&transfer_window);
                             break 'blk;
                         }
 
                         buffer.extend_from_slice(&property.value);
                         task.state = RequestTaskState::PendingIncr {
-                            owner,
                             mimes,
                             data,
                             buffer,
@@ -521,7 +491,7 @@ impl<'a> Selection<'a> {
                         reply(reply_property)
                     };
 
-                    if ![self.atoms.CLIPBOARD, self.atoms.PRIMARY].contains(&ev.selection) {
+                    if ev.selection != self.selection_atom {
                         break 'blk reply(x11rb::NONE)?;
                     }
                     let Some(item_id) = self.paste_item_id else {
@@ -584,12 +554,15 @@ impl<'a> Selection<'a> {
 
                         self.incr_paste_tasks.insert(
                             (ev.requestor, property),
-                            Task::new(IncrPasteTaskState::TransferingIncr {
-                                target: ev.target,
-                                item_id,
-                                data_atom_name: atom_name.to_string(),
-                                offset: 0,
-                            }),
+                            Task::new(
+                                IncrPasteTaskState::TransferingIncr {
+                                    target: ev.target,
+                                    item_id,
+                                    data_atom_name: atom_name.to_string(),
+                                    offset: 0,
+                                },
+                                (),
+                            ),
                         );
 
                         break 'blk reply(property)?;
@@ -684,27 +657,29 @@ impl<'a> Selection<'a> {
 
     fn process_selection_data(
         &mut self,
-        transfer_atom: Atom,
+        transfer_window: TransferWindow,
         value: Vec<u8>,
-        mime_name: String,
+        mime_name: Option<String>,
         mime_atom: Atom,
+        owner: Owner,
     ) -> Result<Option<(Option<&SelectionItem>, Vec<SelectionItem>)>> {
-        let mut task = self.request_tasks.remove(&transfer_atom).unwrap();
+        let mut task = self.request_tasks.remove(&transfer_window.id).unwrap();
 
         let RequestTaskState::PendingSelection {
-            owner,
             ref mut data,
             ref mimes,
         } = task.state
         else {
             panic!(
-                "Expected task.state of transfer_atom {transfer_atom} to be PendingSelection, but was {:?}",
-                task.state
+                "Expected task.state of transfer_atom {} to be PendingSelection, but was {:?}",
+                transfer_window.atom, task.state
             );
         };
 
-        // Dropping empty selection
-        if !value.is_empty() {
+        // Dropping empty selection and selection with None mime_name (because of invalid owner response)
+        if !value.is_empty()
+            && let Some(mime_name) = mime_name
+        {
             data.insert(mime_name.clone(), value);
             self.mime_atoms
                 .borrow_mut()
@@ -712,20 +687,20 @@ impl<'a> Selection<'a> {
         }
 
         if let Some(&next_atom) = mimes.keys().next() {
-            self.request_tasks.insert(transfer_atom, task);
+            self.request_tasks.insert(transfer_window.id, task);
             self.conn
                 .convert_selection(
-                    self.transfer_window,
+                    transfer_window.id,
                     self.selection_atom,
                     next_atom,
-                    transfer_atom,
+                    transfer_window.atom,
                     x11rb::CURRENT_TIME,
                 )?
                 .check()?;
             return Ok(None);
         }
 
-        self.transfer_atoms.release(transfer_atom);
+        self.transfer_windows.release(transfer_window);
 
         // Ignoring selection with empty data
         if data.is_empty() {
@@ -791,8 +766,18 @@ impl<'a> Selection<'a> {
             .partition(|(_, task)| now.duration_since(task.last_update) < OVERDUE_TIMEOUT);
         self.request_tasks = kept;
 
-        for transfer_atom in removed.keys() {
-            self.transfer_atoms.release(*transfer_atom);
+        for (
+            transfer_window,
+            Task {
+                metadata: (transfer_atom, _),
+                ..
+            },
+        ) in removed
+        {
+            self.transfer_windows.release(TransferWindow {
+                id: transfer_window,
+                atom: transfer_atom,
+            });
         }
 
         self.incr_paste_tasks

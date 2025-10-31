@@ -1,10 +1,10 @@
-pub mod atom_pool;
 pub mod config;
 pub mod freedesktop_cache;
 pub mod input;
 pub mod opengl_context;
 pub mod persistence;
 pub mod selection;
+pub mod transfer_window_pool;
 pub mod ui;
 pub mod utils;
 pub mod widgets;
