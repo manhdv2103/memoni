@@ -153,7 +153,8 @@ impl Widget for ClipboardButton {
 
             let mut cursor_x = rect.min.x;
             if let Some((ref texture, size)) = self.preview {
-                let preview_rect = Rect::from_min_size(rect.min, size);
+                let preview_rect =
+                    Rect::from_min_size(rect.min, egui::vec2(size.x, desired_height));
                 let preview = Image::from_texture(texture)
                     .maintain_aspect_ratio(true)
                     .bg_fill(self.preview_background)
