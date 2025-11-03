@@ -38,21 +38,34 @@ struct ImageInfo {
 
 const FALLBACK_IMG_BYTES: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/assets/fallback_image.png"
+    "/assets/images/fallback_image.png"
 ));
 const FALLBACK_FILE_BYTES: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/assets/fallback_file.png"
+    "/assets/images/fallback_file.png"
 ));
 const FALLBACK_DIR_BYTES: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/assets/fallback_directory.png"
+    "/assets/images/fallback_directory.png"
 ));
 struct Fallback {
     image: RgbaImage,
     file: RgbaImage,
     directory: RgbaImage,
 }
+
+const NOTO_SANS: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/fonts/Noto_Sans/NotoSans-Regular.ttf"
+));
+const NOTO_SYMBOLS: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/fonts/Noto_Sans_Symbols_2/NotoSansSymbols2-Regular.ttf"
+));
+const NOTO_EMOJI: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/fonts/Noto_Emoji/NotoEmoji-Regular.ttf"
+));
 
 pub struct Ui<'a> {
     pub egui_ctx: egui::Context,
@@ -99,9 +112,40 @@ impl<'a> Ui<'a> {
             }
         });
 
+        let mut fonts = FontDefinitions::default();
+        fonts.font_data.insert(
+            "NotoSans-Regular".to_owned(),
+            Arc::new(FontData::from_static(NOTO_SANS)),
+        );
+
+        fonts.font_data.insert(
+            "NotoEmoji-Regular".to_owned(),
+            Arc::new(FontData::from_static(NOTO_EMOJI).tweak(FontTweak {
+                scale: 0.81,
+                ..Default::default()
+            })),
+        );
+
+        // Mostly for the newline symbol (⏎)
+        fonts.font_data.insert(
+            "NotoSansSymbols2-Regular".to_owned(),
+            Arc::new(FontData::from_static(NOTO_SYMBOLS).tweak(FontTweak {
+                y_offset_factor: 0.175,
+                ..Default::default()
+            })),
+        );
+
+        fonts.families.insert(
+            FontFamily::Proportional,
+            vec![
+                "NotoSans-Regular".to_owned(),
+                "NotoEmoji-Regular".to_owned(),
+                "NotoSansSymbols2-Regular".to_owned(),
+            ],
+        );
+
         if let Some(font_family) = &font.family {
             if let Some(font_path) = Self::find_font(font_family)? {
-                let mut fonts = FontDefinitions::default();
                 fonts.font_data.insert(
                     "config_font".to_owned(),
                     Arc::new(FontData::from_owned(fs::read(font_path)?).tweak(FontTweak {
@@ -115,12 +159,12 @@ impl<'a> Ui<'a> {
                     .get_mut(&FontFamily::Proportional)
                     .unwrap()
                     .insert(0, "config_font".to_owned());
-
-                egui_ctx.set_fonts(fonts);
             } else {
                 eprintln!("Warning: font family '{}' not found", font_family);
             }
         }
+
+        egui_ctx.set_fonts(fonts);
 
         let fallback_img = image::load_from_memory(FALLBACK_IMG_BYTES)?.to_rgba8();
         let fallback_file = image::load_from_memory(FALLBACK_FILE_BYTES)?.to_rgba8();
