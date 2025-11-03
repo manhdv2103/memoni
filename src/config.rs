@@ -220,10 +220,12 @@ impl Config {
 
 #[serde_as]
 #[derive(Deserialize, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct Binding {
     #[serde_as(as = "FromInto<CharOrNum>")]
     pub key: u32,
-    #[serde(default)]
+
+    #[serde(rename = "modifier", default)]
     #[serde_as(as = "OneOrMany<_>")]
     pub modifiers: Vec<Modifier>,
 }
