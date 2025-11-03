@@ -107,8 +107,10 @@ impl<'a> Ui<'a> {
             }
             style.visuals.widgets.active.weak_bg_fill = theme.button_active_background.into();
 
-            if let Some(font_id) = style.text_styles.get_mut(&egui::TextStyle::Body) {
-                *font_id = egui::FontId::proportional(font.size);
+            for text_style in [egui::TextStyle::Body, egui::TextStyle::Button] {
+                if let Some(font_id) = style.text_styles.get_mut(&text_style) {
+                    *font_id = egui::FontId::proportional(font.size);
+                }
             }
         });
 
