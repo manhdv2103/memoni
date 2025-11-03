@@ -135,35 +135,31 @@ impl<'a> Ui<'a> {
             })),
         );
 
-        fonts.families.insert(
-            FontFamily::Proportional,
-            vec![
-                "NotoSans-Regular".to_owned(),
-                "NotoEmoji-Regular".to_owned(),
-                "NotoSansSymbols2-Regular".to_owned(),
-            ],
-        );
+        let mut font_family_names = vec![];
 
-        if let Some(font_family) = &font.family {
+        for (i, font_family) in font.families.iter().enumerate() {
             if let Some(font_path) = Self::find_font(font_family)? {
                 fonts.font_data.insert(
-                    "config_font".to_owned(),
+                    font_family.clone(),
                     Arc::new(FontData::from_owned(fs::read(font_path)?).tweak(FontTweak {
-                        y_offset_factor: font.y_offset_factor,
+                        y_offset_factor: *font.y_offset_factors.get(i).unwrap_or(&0.0),
                         ..Default::default()
                     })),
                 );
 
-                fonts
-                    .families
-                    .get_mut(&FontFamily::Proportional)
-                    .unwrap()
-                    .insert(0, "config_font".to_owned());
+                font_family_names.push(font_family.clone());
             } else {
                 eprintln!("Warning: font family '{}' not found", font_family);
             }
         }
 
+        font_family_names.push("NotoSans-Regular".to_owned());
+        font_family_names.push("NotoEmoji-Regular".to_owned());
+        font_family_names.push("NotoSansSymbols2-Regular".to_owned());
+
+        fonts
+            .families
+            .insert(FontFamily::Proportional, font_family_names);
         egui_ctx.set_fonts(fonts);
 
         let fallback_img = image::load_from_memory(FALLBACK_IMG_BYTES)?.to_rgba8();

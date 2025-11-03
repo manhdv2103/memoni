@@ -102,24 +102,29 @@ impl Default for LayoutConfig {
 }
 
 #[derive(MakeOptional)]
+#[serde_as]
 #[optional(derive(Default), vis())]
 #[derive(Deserialize, Debug)]
 #[serde(default, deny_unknown_fields)]
 pub struct FontConfig {
-    pub family: Option<String>,
+    #[serde(rename = "family")]
+    #[serde_as(as = "OneOrMany<_>")]
+    pub families: Vec<String>,
     pub size: f32,
     pub secondary_size: f32,
-    pub y_offset_factor: f32,
+    #[serde(rename = "y_offset_factor")]
+    #[serde_as(as = "OneOrMany<_>")]
+    pub y_offset_factors: Vec<f32>,
     pub underline_offset: f32,
 }
 
 impl Default for FontConfig {
     fn default() -> Self {
         Self {
-            family: None,
+            families: vec![],
             size: 13.0,
             secondary_size: 11.0,
-            y_offset_factor: 0.0,
+            y_offset_factors: vec![],
             underline_offset: 0.0,
         }
     }
