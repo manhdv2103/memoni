@@ -1,0 +1,194 @@
+# Maximum items kept in history
+#
+# default: 100
+item_limit = 50
+
+# Draws a colored ribbon on the top-right corner of the window
+# Intended to distinguish CLIPBOARD and PRIMARY windows
+#
+# default: false
+show_ribbon = true
+
+
+# Application-specific paste keybindings for CLIPBOARD selection
+#
+# Map window instance/class names to one binding or an array of bindings.
+# Each binding uses a character key (e.g., 'v') or number (keysym code), plus modifier.
+#
+# default: { key = 'v', modifier = "Control" } for all applications
+[paste_bindings]
+
+# Single binding form
+Alacritty = { key = 'v', modifier = ["Control", "Shift"] }
+
+# Multiple bindings will be pressed in sequence
+Emacs = [
+  { key = 'c', modifier = "Control" },
+  { key = 'y' }
+]
+
+
+# Layout and spacing
+[layout]
+
+# Window dimensions (px)
+#
+# default: { width = 420, height = 550 }
+window_dimensions = { width = 300, height = 700 }
+
+# Window content padding (px)
+#
+# default: { x = 8, y = 8 }
+window_padding = { x = 4, y = 4 }
+
+# Padding (px) around each button
+#
+# default: { x = 8, y = 8 }
+button_padding = { x = 5, y = 5 }
+
+# Padding (px) around buttons with preview thumbnail
+#
+# default: { x = 5, y = 5 }
+button_with_preview_padding = { x = 4, y = 4 }
+
+# Radius (px) for button corners
+#
+# default: 7
+button_corner_radius = 3
+
+# Spacing (px) between buttons
+#
+# default: { x = 5, y = 5 }
+button_spacing = { x = 4, y = 4 }
+
+# Scroll bar margin (px) from window top and bottom edges
+#
+# default: 8
+scroll_bar_margin = 0
+
+# Margin (px) between mouse pointer and window when positioning near pointer
+#
+# default: 5
+pointer_gap = 2
+
+# Minimum distance (px) from screen edges when positioning the window
+#
+# default: 10
+screen_edge_gap = 8
+
+# Size of preview thumbnails (px)
+#
+# default: { width = 105, height = 70 }
+preview_size = { width = 40, height = 40 }
+
+# Ribbon thickness (px) when show_ribbon = true
+#
+# default: 70
+ribbon_size = 150
+
+
+# Font configuration
+[font]
+
+# Font family name to use
+#
+# Multiple fonts can be specified, where subsequent fonts act as fallbacks if earlier ones
+# do not contain the required glyphs (e.g., for emojis or specific languages).
+#
+# default: ["Noto Sans", "Noto Emoji", "Noto Sans Symbols 2"]
+family = ["DejaVu Sans", "JetBrainsMonoNL Nerd Font"]
+
+# Primary text size (pt)
+#
+# default: 13
+size = 12.5
+
+# Secondary text size (pt) (e.g., metadata)
+#
+# default: 11
+secondary_size = 8
+
+# Additional y offset applied to text layout
+#
+# This can be a single number (applied to the first font in 'family')
+# or an array of numbers, where each value corresponds to the y-offset for the font at the
+# matching index in the 'family' array.
+# For example, `y_offset_factor = [0.1, 0.0, -0.05]` would apply 0.1 to the first font,
+# 0.0 to the second, and -0.05 to the third.
+#
+# default: 0 for all fonts
+y_offset_factor = -0.05
+
+# Moves text underline up/down (px)
+#
+# default: 0
+underline_offset = -2
+
+
+# Colors (hex; can be #RRGGBB or #RRGGBBAA)
+[theme]
+
+# Window background
+#
+# default: "#191919"
+background = "#2e313d"
+
+# Primary text color
+#
+# default: "#cccccc"
+foreground = "#eeeeee"
+
+# Muted text color
+#
+# default: "#707070"
+muted_foreground = "#b0b0b0"
+
+# Button background
+#
+# default: "#2f2f2f"
+button_background = "#404552"
+
+# Active/pressed button background
+#
+# default: "#454545"
+button_active_background = "#446688"
+
+# Scroll bar track background
+#
+# default: "#0a0a0a"
+scroll_background = "#1f1f23"
+
+# Scroll bar handle color
+#
+# default: "#bbbbbb"
+scroll_handle = "#dddddd"
+
+# Preview pane background
+#
+# default: "#22222277"
+preview_background = "#434856bf"
+
+# Ribbon color
+#
+# default: CLIPBOARD - "#0000ff55", PRIMARY - "ff000030"
+ribbon = "#48b0bd84"
+
+
+# Selection-specific overrides
+# Any field can be overridden under [CLIPBOARD] or [PRIMARY]
+
+[CLIPBOARD]
+
+# Shows ribbon only on PRIMARY window
+show_ribbon = false
+
+# CLIPBOARD selection theme overrides
+[CLIPBOARD.theme]
+button_active_background = "#912caf"
+scroll_background = "#00000000"
+preview_background = "#00000000"
+
+[PRIMARY]
+
+# Keeps higher items when using PRIMARY
+item_limit = 120
