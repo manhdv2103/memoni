@@ -3,6 +3,8 @@ use egui::{
     TextWrapMode, TextureHandle, Ui, Vec2, Widget, WidgetText,
 };
 
+const SUBLABEL_GAP: f32 = 3.0;
+
 #[derive(Default, Clone)]
 pub struct ClipboardButton {
     labels: Vec<WidgetText>,
@@ -87,14 +89,18 @@ impl Widget for ClipboardButton {
         if let Some((_, img_size)) = self.preview {
             text_width -= img_size.x;
         }
-        let galleys = self.labels.into_iter().map(|l| {
-            l.into_galley(
-                ui,
-                Some(TextWrapMode::Truncate),
-                text_width,
-                TextStyle::Button,
-            )
-        }).collect::<Vec<_>>();
+        let galleys = self
+            .labels
+            .into_iter()
+            .map(|l| {
+                l.into_galley(
+                    ui,
+                    Some(TextWrapMode::Truncate),
+                    text_width,
+                    TextStyle::Button,
+                )
+            })
+            .collect::<Vec<_>>();
         let sublabel_galley = self.sublabel.map(|sl| {
             sl.into_galley(
                 ui,
@@ -118,7 +124,10 @@ impl Widget for ClipboardButton {
 
         let mut desired_height = 0.0;
         let text_height = galleys.iter().fold(0.0, |acc, g| acc + g.size().y)
-            + sublabel_galley.as_ref().map(|g| g.size().y).unwrap_or(0.0)
+            + sublabel_galley
+                .as_ref()
+                .map(|g| g.size().y + SUBLABEL_GAP)
+                .unwrap_or(0.0)
             + img_src_galley.as_ref().map(|g| g.size().y).unwrap_or(0.0);
         let preview_height = self.preview.as_ref().map(|i| i.1.y).unwrap_or(0.0);
         desired_height += preview_height.max(text_height + padding.y * 2.0);
