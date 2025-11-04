@@ -81,7 +81,7 @@ impl Default for LayoutConfig {
     fn default() -> Self {
         Self {
             window_dimensions: Dimensions {
-                width: 420,
+                width: 400,
                 height: 550,
             },
             window_padding: XY { x: 8, y: 8 },
