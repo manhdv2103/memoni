@@ -902,10 +902,6 @@ fn filter_mimes(mimes: HashMap<Atom, String>) -> HashMap<Atom, String> {
         } else if mime == "x-kde-passwordManagerHint" {
             filtered_mimes.drain();
             return filtered_mimes;
-
-        // Weird mimes prevent copying image on firefox
-        } else if mime == "text/ico" || mime == "application/ico" {
-            continue;
         } else {
             filtered_mimes.insert(*atom, mime.to_string());
         }
