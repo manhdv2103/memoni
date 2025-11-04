@@ -10,18 +10,18 @@ item_limit = 50
 show_ribbon = true
 
 
-# Application-specific paste keybindings for CLIPBOARD selection
+# Application-specific paste keymaps for CLIPBOARD selection
 #
-# Map window instance/class names to one binding or an array of bindings.
-# Each binding uses a character key (e.g., 'v') or number (keysym code), plus modifier.
+# Map window instance/class names to one or more key strokes.
+# Each key stroke uses a character key (e.g., 'v') or number (keysym code), plus modifier.
 #
 # default: { key = 'v', modifier = "Control" } for all applications
-[paste_bindings]
+[app_paste_keymaps]
 
-# Single binding form
+# Single key stroke form
 Alacritty = { key = 'v', modifier = ["Control", "Shift"] }
 
-# Multiple bindings will be pressed in sequence
+# Multiple key strokes will be pressed in sequence
 Emacs = [
   { key = 'c', modifier = "Control" },
   { key = 'y' }

@@ -823,12 +823,12 @@ impl<'a> Selection<'a> {
         };
 
         if self.selection_atom == self.atoms.CLIPBOARD {
-            let paste_bindings = &self.config.paste_bindings;
+            let app_paste_keymaps = &self.config.app_paste_keymaps;
             let bindings = if let Some((instance_name, class_name)) =
                 get_window_class(self.conn, focused_window)?
-                && let Some(bindings) = paste_bindings
+                && let Some(bindings) = app_paste_keymaps
                     .get(&instance_name)
-                    .or_else(|| paste_bindings.get(&class_name))
+                    .or_else(|| app_paste_keymaps.get(&class_name))
             {
                 bindings
             } else {

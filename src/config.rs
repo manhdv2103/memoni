@@ -36,7 +36,7 @@ pub struct Config {
     pub show_ribbon: bool,
 
     #[serde_as(as = "HashMap<_, OneOrMany<_>>")]
-    pub paste_bindings: HashMap<String, Vec<Binding>>,
+    pub app_paste_keymaps: HashMap<String, Vec<Binding>>,
 
     #[optional(optional_type)]
     pub layout: LayoutConfig,
@@ -51,7 +51,7 @@ impl Default for Config {
         Self {
             item_limit: 100,
             show_ribbon: false,
-            paste_bindings: Default::default(),
+            app_paste_keymaps: Default::default(),
             layout: Default::default(),
             font: Default::default(),
             theme: Default::default(),
