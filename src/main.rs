@@ -82,6 +82,10 @@ fn parse_args() -> Result<Args> {
                     _ => bail!("invalid selection type \"{selection_str}\""),
                 };
             }
+            Short('v') | Long("version") if !is_server_mode => {
+                println!("v{}", env!("CARGO_PKG_VERSION"));
+                std::process::exit(0);
+            }
             Short('h') | Long("help") => {
                 if is_server_mode {
                     println!(
@@ -106,6 +110,7 @@ USAGE:
 
 OPTIONS:
   -s, --selection TYPE    Sets selection type [possible values: CLIPBOARD, PRIMARY] [default: CLIPBOARD]
+  -v, --version           Prints memoni version
   -h, --help              Prints help information"
                     );
                 }
