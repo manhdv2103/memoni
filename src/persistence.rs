@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use std::{collections::VecDeque, fs, path::PathBuf};
 
 use crate::selection::{SelectionItem, SelectionType};
@@ -12,7 +12,7 @@ pub struct Persistence {
 impl Persistence {
     pub fn new(selection_type: SelectionType) -> Result<Self> {
         let xdg_data_home = dirs::data_dir()
-            .unwrap_or_else(std::env::temp_dir)
+            .ok_or_else(|| anyhow!("data directory not found"))?
             .join("memoni");
         fs::create_dir_all(&xdg_data_home)?;
 

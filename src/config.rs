@@ -199,14 +199,11 @@ impl Config {
             SelectionType::PRIMARY => default_primary_config(),
         });
 
-        let config_path = dirs::config_dir()
-            .unwrap_or_else(std::env::temp_dir)
-            .join("memoni")
-            .join("config.toml");
-
-        if !config_path.exists() {
-            return Ok(default_config);
-        }
+        let config_path = match dirs::config_dir().map(|dir| dir.join("memoni").join("config.toml"))
+        {
+            Some(p) if p.exists() => p,
+            _ => return Ok(default_config),
+        };
 
         let config_content = fs::read_to_string(&config_path)?;
         let config_set: ConfigSet =

@@ -1,25 +1,17 @@
 use std::{
-    env,
     os::unix::ffi::OsStrExt as _,
     path::{self, Path, PathBuf},
 };
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use md5::{Digest, Md5};
 
 use crate::utils::{percent_encode, to_hex_string};
 
-pub fn xdg_cache_home() -> PathBuf {
-    env::var_os("XDG_CACHE_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            let home = env::var_os("HOME").expect("$HOME environment variable not set");
-            PathBuf::from(home).join(".cache")
-        })
-}
-
 pub fn get_cached_thumbnail<P: AsRef<Path>>(file: P) -> Result<Option<PathBuf>> {
-    let thumbnails_dir = xdg_cache_home().join("thumbnails");
+    let thumbnails_dir = dirs::cache_dir()
+        .ok_or_else(|| anyhow!("cache directory not found"))?
+        .join("thumbnails");
 
     let is_cached_thumbnail = file.as_ref().ancestors().any(|a| a == thumbnails_dir);
     if is_cached_thumbnail {
