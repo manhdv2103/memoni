@@ -5,6 +5,7 @@ use std::os::unix::ffi::OsStrExt as _;
 use std::{thread, time};
 
 use anyhow::Result;
+use log::{debug, info, warn};
 use x11rb::connection::Connection;
 use x11rb::protocol::randr::ConnectionExt as _;
 use x11rb::protocol::xfixes::ConnectionExt as _;
@@ -56,13 +57,14 @@ impl<'a> X11Window<'a> {
         selection_type: SelectionType,
         always_follows_pointer: bool,
     ) -> Result<Self> {
+        info!("connecting to X11");
         let (conn, screen_num) = XCBConnection::connect(None)?;
         let setup = conn.setup();
         let screen = setup.roots[screen_num].to_owned();
-        let win_id = conn.generate_id()?;
-
         let atoms = Atoms::new(&conn)?.reply()?;
 
+        let win_id = conn.generate_id()?;
+        info!("creating main window with id {win_id}");
         let win_event_mask = EventMask::EXPOSURE
             | EventMask::STRUCTURE_NOTIFY
             | EventMask::BUTTON_PRESS
@@ -166,17 +168,27 @@ impl<'a> X11Window<'a> {
         )?;
         self.win_pos.set((x, y));
         self.win_placed_above_pointer.set(placed_above_pointer);
+        info!(
+            "window position updated: ({x}, {y}), {} the pointer",
+            if placed_above_pointer {
+                "above"
+            } else {
+                "below"
+            }
+        );
 
         Ok(())
     }
 
     pub fn show_window(&self) -> Result<()> {
+        debug!("mapping window");
         self.conn.map_window(self.win_id)?;
         self.conn.flush()?;
         Ok(())
     }
 
     pub fn hide_window(&self) -> Result<()> {
+        debug!("unmapping window");
         self.conn.unmap_window(self.win_id)?;
         self.conn.flush()?;
         Ok(())
@@ -185,6 +197,7 @@ impl<'a> X11Window<'a> {
     pub fn grab_input(&self) -> Result<()> {
         // Have to repeatedly retry because if memoni is triggered from a window manager (e.g. i3)
         // keymap, the WM is probably still grabbing the keyboard and not ungrabbing immediately
+        debug!("grabbing keyboard");
         let mut grab_keyboard_success = false;
         for _ in 0..100 {
             let grab_keyboard = self.conn.grab_keyboard(
@@ -201,10 +214,11 @@ impl<'a> X11Window<'a> {
             thread::sleep(time::Duration::from_millis(10));
         }
         if !grab_keyboard_success {
-            eprintln!("Warning: failed to grab keyboard");
+            warn!("failed to grab keyboard");
         }
 
         // Same reason as above, just applied to pointer keymaps
+        debug!("grabbing pointer");
         let mut grab_pointer_success = false;
         for _ in 0..100 {
             let grab_pointer = self.conn.grab_pointer(
@@ -224,16 +238,18 @@ impl<'a> X11Window<'a> {
             thread::sleep(time::Duration::from_millis(10));
         }
         if !grab_pointer_success {
-            eprintln!("Warning: failed to grab pointer");
+            warn!("failed to grab pointer");
         }
 
         Ok(())
     }
 
     pub fn ungrab_input(&self) -> Result<()> {
+        debug!("ungrabbing keyboard");
         let ungrab_keyboard = self.conn.ungrab_keyboard(x11rb::CURRENT_TIME)?;
         ungrab_keyboard.check()?;
 
+        debug!("ungrabbing pointer");
         let ungrab_pointer = self.conn.ungrab_pointer(x11rb::CURRENT_TIME)?;
         ungrab_pointer.check()?;
 
@@ -241,6 +257,7 @@ impl<'a> X11Window<'a> {
     }
 
     pub fn enable_events(&self) -> Result<()> {
+        debug!("set event mask to {:?}", self.win_event_mask);
         self.conn.change_window_attributes(
             self.win_id,
             &ChangeWindowAttributesAux::new().event_mask(self.win_event_mask),
@@ -250,6 +267,7 @@ impl<'a> X11Window<'a> {
     }
 
     pub fn disable_events(&self) -> Result<()> {
+        debug!("set event mask to {:?} (no event)", EventMask::NO_EVENT);
         self.conn.change_window_attributes(
             self.win_id,
             &ChangeWindowAttributesAux::new().event_mask(EventMask::NO_EVENT),

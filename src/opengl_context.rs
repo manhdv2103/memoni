@@ -10,6 +10,7 @@ use glutin::{
     prelude::{GlDisplay as _, NotCurrentGlContext as _},
     surface::{GlSurface as _, Surface, SurfaceAttributesBuilder, WindowSurface},
 };
+use log::{info, trace};
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle, XcbDisplayHandle, XcbWindowHandle};
 use std::{
     ffi::CString,
@@ -30,6 +31,7 @@ pub struct OpenGLContext {
 
 impl OpenGLContext {
     pub unsafe fn new(window: &X11Window, config: &Config) -> Result<Self> {
+        info!("creating GL display via EGL");
         let display_handle = XcbDisplayHandle::new(
             NonNull::new(window.conn.get_raw_xcb_connection()),
             window.screen_num as _,
@@ -90,6 +92,7 @@ impl OpenGLContext {
         };
         let gl = Arc::new(gl);
 
+        info!("creating egui_glow painter");
         let painter = Painter::new(gl.clone(), "", None, true)?;
 
         let background_color: Color32 = config.theme.background.into();
@@ -114,6 +117,7 @@ impl OpenGLContext {
         egui_ctx: &egui::Context,
         full_output: egui::FullOutput,
     ) -> Result<()> {
+        trace!("rendering frame");
         let egui::FullOutput {
             platform_output: _,
             mut textures_delta,
@@ -144,10 +148,13 @@ impl OpenGLContext {
         }
 
         self.surface.swap_buffers(&self.context)?;
+        trace!("frame rendered");
+
         Ok(())
     }
 
     pub fn destroy(&mut self) {
+        info!("destroying painter");
         self.painter.destroy();
     }
 }

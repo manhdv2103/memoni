@@ -20,6 +20,7 @@ x11rb::atom_manager! {
     }
 }
 
+#[derive(Debug)]
 pub struct TransferWindow {
     pub id: Window,
     pub atom: Atom,

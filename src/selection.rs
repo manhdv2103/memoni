@@ -10,6 +10,7 @@ use std::{
 
 use anyhow::{Context as _, Result, anyhow};
 use bincode::{Decode, Encode};
+use log::{debug, error, info, trace, warn};
 use x11rb::protocol::{
     Event,
     xfixes::SelectionEventMask,
@@ -22,7 +23,7 @@ use x11rb::{connection::RequestConnection as _, protocol::xtest::ConnectionExt a
 use xkeysym::Keysym;
 
 use crate::{
-    config::{Binding, Config, Modifier},
+    config::{Config, KeyStroke, Modifier},
     transfer_window_pool::{TransferWindow, TransferWindowPool},
     utils::{image_mime_score, is_image_mime, is_plaintext_mime, plaintext_mime_score},
     x11_key_converter::X11KeyConverter,
@@ -154,18 +155,17 @@ impl<'a> Selection<'a> {
     ) -> Result<Self> {
         let conn = &window.conn;
         let root = window.screen.root;
-
-        conn.prefetch_extension_information(xfixes::X11_EXTENSION_NAME)?;
-        conn.extension_information(xfixes::X11_EXTENSION_NAME)?
-            .context("No XFixes found")?;
-        xfixes::query_version(conn, 5, 0)?.reply()?;
-
         let atoms = Atoms::new(conn)?.reply()?;
         let selection_atom = match selection_type {
             SelectionType::PRIMARY => atoms.PRIMARY,
             SelectionType::CLIPBOARD => atoms.CLIPBOARD,
         };
 
+        debug!("ensuring XFixes exists");
+        conn.prefetch_extension_information(xfixes::X11_EXTENSION_NAME)?;
+        conn.extension_information(xfixes::X11_EXTENSION_NAME)?
+            .context("XFixes not found")?;
+        xfixes::query_version(conn, 5, 0)?.reply()?;
         xfixes::select_selection_input(
             conn,
             root,
@@ -204,10 +204,13 @@ impl<'a> Selection<'a> {
                 // Capture copied data
                 Event::XfixesSelectionNotify(ev) => {
                     if ev.owner == self.paste_window {
+                        debug!("ignoring selection notification from ourselves");
                         break 'blk;
                     }
 
+                    info!("selection notification received from owner {}", ev.owner);
                     let transfer_window = self.transfer_windows.get()?;
+                    info!("requesting selection with transfer window: {transfer_window:?}");
                     conn.convert_selection(
                         transfer_window.id,
                         ev.selection,
@@ -228,7 +231,9 @@ impl<'a> Selection<'a> {
                 Event::SelectionNotify(ev) => {
                     let transfer_window = ev.requestor;
                     let Some(task) = self.request_tasks.get_mut(&transfer_window) else {
-                        //  Ignoring selection notify to unknown requestor
+                        warn!(
+                            "ignoring selection notification to unknown requestor: {transfer_window}",
+                        );
                         break 'blk;
                     };
                     let (transfer_atom, owner) = task.metadata;
@@ -250,19 +255,23 @@ impl<'a> Selection<'a> {
 
                     match task.state {
                         RequestTaskState::TargetsRequest => {
+                            debug!(
+                                "targets request received for transfer window {transfer_window}",
+                            );
+
                             let Some(property) = property else {
-                                // Targets request failed
+                                warn!("targets response cancelled");
                                 break 'blk;
                             };
 
                             let property = property.reply()?;
                             if property.type_ == atoms.INCR {
-                                // Ignoring abusive TARGETS property
+                                warn!("ignoring abusive TARGETS property: {property:?}");
                                 break 'blk;
                             }
 
                             let Some(value) = property.value32() else {
-                                // Invalid TARGETS property value format
+                                error!("invalid TARGETS property value format: {property:?}");
                                 break 'blk;
                             };
 
@@ -286,9 +295,6 @@ impl<'a> Selection<'a> {
 
                                 atom_cookies.push((conn.get_atom_name(atom)?, atom));
                             }
-                            if atom_cookies.is_empty() {
-                                break 'blk;
-                            }
 
                             let mut mimes = HashMap::new();
                             for (cookie, atom) in atom_cookies {
@@ -296,12 +302,15 @@ impl<'a> Selection<'a> {
                                 let name = str::from_utf8(&reply.name)?.to_string();
                                 mimes.insert(atom, name);
                             }
+                            debug!("unfiltered targets: {mimes:?}");
 
                             let mimes = filter_mimes(mimes);
                             if mimes.is_empty() {
+                                warn!("no usable targets returned, dropping selection");
                                 break 'blk;
                             }
 
+                            info!("choosing targets: {:?}", mimes.values());
                             if let Some(&target_atom) = mimes.keys().next() {
                                 conn.convert_selection(
                                     transfer_window,
@@ -323,6 +332,14 @@ impl<'a> Selection<'a> {
                             ref mut data,
                         } => {
                             let mime_name = mimes.remove(&ev.target);
+                            debug!(
+                                "pending selection target {} ({}) received for transfer window {transfer_window}",
+                                ev.target,
+                                mime_name
+                                    .as_ref()
+                                    .map(|n| format!("\"{n}\""))
+                                    .unwrap_or("None".to_string())
+                            );
                             let (property_type, property_value) = if let Some(property) = property {
                                 let prop_rep = property.reply()?;
                                 (prop_rep.type_, prop_rep.value)
@@ -333,6 +350,7 @@ impl<'a> Selection<'a> {
                             if property_type == atoms.INCR
                                 && let Some(mime_name) = mime_name
                             {
+                                debug!("waiting for INCR transfer");
                                 let mimes = mem::take(mimes);
                                 let data = mem::take(data);
 
@@ -369,18 +387,20 @@ impl<'a> Selection<'a> {
                     if !self.incr_paste_tasks.contains_key(&(ev.window, ev.atom)) =>
                 {
                     if ev.atom == self.atoms._NET_WM_NAME {
-                        // Ignoring window name property change.
+                        trace!("ignoring window name property change");
                         break 'blk;
                     }
 
                     if ev.state != Property::NEW_VALUE {
-                        // Ignoring irrelevant property state change
+                        trace!("ignoring irrelevant property state change: {:?}", ev.state);
                         break 'blk;
                     }
 
                     let transfer_window = ev.window;
                     let Some(task) = self.request_tasks.get_mut(&transfer_window) else {
-                        //  Ignoring property notify to unknown requestor
+                        warn!(
+                            "ignoring property notification to unknown requestor: {transfer_window}"
+                        );
                         break 'blk;
                     };
                     let (transfer_atom, owner) = task.metadata;
@@ -401,12 +421,18 @@ impl<'a> Selection<'a> {
                             *current_mime_atom,
                         ))
                     } else {
+                        trace!("ignoring property to be processed in selection notification");
                         None
                     };
 
                     if let Some((mimes, data, mut buffer, current_mime_name, current_mime_atom)) =
                         incr_task_state
                     {
+                        debug!(
+                            "pending INCR selection target {} ({:?}) received for transfer window {transfer_window}",
+                            current_mime_atom, current_mime_name
+                        );
+
                         let property = conn.get_property(
                             true,
                             ev.window,
@@ -437,11 +463,14 @@ impl<'a> Selection<'a> {
                         }
 
                         if buffer.len() + property.value.len() > MAX_INCR_SIZE {
-                            eprintln!("Warning: INCR transfer exceeds size limit, aborting");
+                            warn!(
+                                "INCR transfer exceeds size limit of {MAX_INCR_SIZE} bytes, dropping selection"
+                            );
                             self.request_tasks.remove(&transfer_window);
                             break 'blk;
                         }
 
+                        debug!("writing {} bytes for INCR transfer", property.value.len());
                         buffer.extend_from_slice(&property.value);
                         task.state = RequestTaskState::PendingIncr {
                             mimes,
@@ -455,6 +484,11 @@ impl<'a> Selection<'a> {
 
                 // Handle paste request
                 Event::SelectionRequest(ev) => {
+                    debug!(
+                        "paste request received from requestor {} for target {}",
+                        ev.requestor, ev.target
+                    );
+
                     let reply = |property| -> Result<()> {
                         conn.send_event(
                             false,
@@ -475,12 +509,13 @@ impl<'a> Selection<'a> {
                     };
 
                     let property = if ev.property == x11rb::NONE {
-                        // Obsolete client
+                        debug!("obsolete client detected");
                         ev.target
                     } else {
                         ev.property
                     };
                     if property == x11rb::NONE {
+                        warn!("invalid paste request: no property provided to place the data");
                         break 'blk reply(x11rb::NONE)?;
                     }
 
@@ -492,12 +527,15 @@ impl<'a> Selection<'a> {
                     };
 
                     if ev.selection != self.selection_atom {
+                        debug!("unsupported selection type: {}", ev.selection);
                         break 'blk reply(x11rb::NONE)?;
                     }
                     let Some(item_id) = self.paste_item_id else {
+                        debug!("nothing to paste: no paste item id");
                         break 'blk reply(x11rb::NONE)?;
                     };
                     let Some(item) = &self.items.iter().find(|i| i.id == item_id) else {
+                        debug!("nothing to paste: no paste item");
                         break 'blk reply(x11rb::NONE)?;
                     };
 
@@ -520,10 +558,12 @@ impl<'a> Selection<'a> {
                     }
 
                     if !supported_atoms.contains(&ev.target) {
+                        debug!("unsupported target: {}", ev.target);
                         break 'blk reply(x11rb::NONE)?;
                     }
 
                     if ev.target == self.atoms.TARGETS {
+                        debug!("responding to paste request with TARGETS");
                         conn.change_property32(
                             PropMode::REPLACE,
                             ev.requestor,
@@ -535,9 +575,17 @@ impl<'a> Selection<'a> {
                         break 'blk reply(property)?;
                     }
 
-                    let (data, atom_name) = requested_data.unwrap();
+                    info!(
+                        "transfering selection to requestor {} with atom {}",
+                        ev.requestor, property
+                    );
 
+                    let (data, atom_name) = requested_data.unwrap();
                     if data.len() > INCR_CHUNK_SIZE {
+                        debug!(
+                            "starting paste request INCR transfer for {} bytes",
+                            data.len()
+                        );
                         conn.change_window_attributes(
                             ev.requestor,
                             &ChangeWindowAttributesAux::new()
@@ -568,6 +616,10 @@ impl<'a> Selection<'a> {
                         break 'blk reply(property)?;
                     }
 
+                    info!(
+                        "responded to requestor {} paste request with selection {} ({atom_name})",
+                        ev.requestor, item.id
+                    );
                     conn.change_property8(
                         PropMode::REPLACE,
                         ev.requestor,
@@ -582,11 +634,12 @@ impl<'a> Selection<'a> {
                 // Handle INCR paste request
                 Event::PropertyNotify(ev) => {
                     if ev.state != Property::DELETE {
-                        // Ignoring irrelevant property state change
+                        trace!("ignoring irrelevant property state change: {:?}", ev.state);
                         break 'blk;
                     }
 
                     let Some(task) = self.incr_paste_tasks.get_mut(&(ev.window, ev.atom)) else {
+                        error!("received property notification after INCR transfer completed");
                         break 'blk;
                     };
 
@@ -618,8 +671,16 @@ impl<'a> Selection<'a> {
                                 let chunk = &data[*offset..end];
 
                                 if *offset == end {
+                                    info!(
+                                        "responded to requestor {} paste request with selection {} ({data_atom_name})",
+                                        ev.window, item_id
+                                    );
                                     end_transfering(&mut self.incr_paste_tasks)?;
                                 } else {
+                                    debug!(
+                                        "continuing INCR transfer with {} bytes remaining",
+                                        data.len() - end
+                                    );
                                     *offset = end;
                                 }
 
@@ -632,7 +693,9 @@ impl<'a> Selection<'a> {
                                 )?
                                 .check()?;
                             } else {
-                                // The item has disappeared somehow, stops transfering
+                                warn!(
+                                    "paste selection {item_id} with target {data_atom_name} not found, stopping INCR transfer"
+                                );
                                 end_transfering(&mut self.incr_paste_tasks)?;
                                 conn.change_property8(
                                     PropMode::REPLACE,
@@ -644,6 +707,11 @@ impl<'a> Selection<'a> {
                                 .check()?;
                             }
                         }
+                    }
+                }
+                Event::SelectionClear(event) => {
+                    if event.owner == self.paste_window && self.paste_item_id.is_some() {
+                        info!("lost selection ownership");
                     }
                 }
                 _ => {}
@@ -676,7 +744,6 @@ impl<'a> Selection<'a> {
             );
         };
 
-        // Dropping empty selection and selection with None mime_name (because of invalid owner response)
         if !value.is_empty()
             && let Some(mime_name) = mime_name
         {
@@ -684,6 +751,8 @@ impl<'a> Selection<'a> {
             self.mime_atoms
                 .borrow_mut()
                 .insert(mime_name.clone(), mime_atom);
+        } else {
+            warn!("dropping empty or invalid target");
         }
 
         if let Some(&next_atom) = mimes.keys().next() {
@@ -702,8 +771,8 @@ impl<'a> Selection<'a> {
 
         self.transfer_windows.release(transfer_window);
 
-        // Ignoring selection with empty data
         if data.is_empty() {
+            warn!("dropping empty selection");
             return Ok(None);
         }
 
@@ -730,12 +799,14 @@ impl<'a> Selection<'a> {
             // ---
             && (contains(new_text, prev_text) || contains(prev_text, new_text))
         {
+            debug!("merging selection with the previous one");
             removed.push(self.items.pop_front().unwrap());
         }
 
         let mut is_previously_seen = false;
         let mut new_item = None;
         if let Some(idx) = self.items.iter().position(|i| i.id == new_item_id) {
+            debug!("selection is duplicated, removing old one");
             let previous_seen_item = self.items.remove(idx).unwrap();
             self.items.push_front(previous_seen_item);
 
@@ -753,6 +824,7 @@ impl<'a> Selection<'a> {
             new_item = self.items.front();
         }
 
+        info!("selection transfer completed with new selection: {new_item_id}");
         self.prev_item_metadata = Some((owner, Instant::now(), is_previously_seen));
         Ok(Some((new_item, removed)))
     }
@@ -760,11 +832,18 @@ impl<'a> Selection<'a> {
     fn purge_overdue_tasks(&mut self) {
         let now = Instant::now();
 
-        let (kept, removed): (HashMap<_, _>, HashMap<_, _>) = self
+        let (request_kept, request_removed): (HashMap<_, _>, HashMap<_, _>) = self
             .request_tasks
             .drain()
             .partition(|(_, task)| now.duration_since(task.last_update) < OVERDUE_TIMEOUT);
-        self.request_tasks = kept;
+        self.request_tasks = request_kept;
+
+        if !request_removed.is_empty() {
+            warn!(
+                "purging overdue request tasks: {:?}",
+                request_removed.keys()
+            );
+        }
 
         for (
             transfer_window,
@@ -772,7 +851,7 @@ impl<'a> Selection<'a> {
                 metadata: (transfer_atom, _),
                 ..
             },
-        ) in removed
+        ) in request_removed
         {
             self.transfer_windows.release(TransferWindow {
                 id: transfer_window,
@@ -780,19 +859,27 @@ impl<'a> Selection<'a> {
             });
         }
 
-        self.incr_paste_tasks
-            .retain(|_, task| now.duration_since(task.last_update) < OVERDUE_TIMEOUT);
+        let (paste_kept, paste_removed): (HashMap<_, _>, HashMap<_, _>) = self
+            .incr_paste_tasks
+            .drain()
+            .partition(|(_, task)| now.duration_since(task.last_update) < OVERDUE_TIMEOUT);
+        self.incr_paste_tasks = paste_kept;
+
+        if !paste_removed.is_empty() {
+            warn!("purging overdue paste tasks: {:?}", paste_removed.keys());
+        }
     }
 
     pub fn paste(&mut self, item_id: u64, pointer_original_pos: (i16, i16)) -> Result<()> {
+        let focused_window = self.conn.get_input_focus()?.reply()?.focus;
+        if focused_window == self.paste_window {
+            warn!("trying to paste into itself");
+            return Ok(());
+        }
+
         self.conn
             .set_selection_owner(self.paste_window, self.selection_atom, x11rb::CURRENT_TIME)?
             .check()?;
-
-        let focused_window = self.conn.get_input_focus()?.reply()?.focus;
-        if focused_window == self.paste_window {
-            return Ok(());
-        }
 
         let key = |type_, code| {
             self.conn
@@ -824,31 +911,35 @@ impl<'a> Selection<'a> {
 
         if self.selection_atom == self.atoms.CLIPBOARD {
             let app_paste_keymaps = &self.config.app_paste_keymaps;
-            let bindings = if let Some((instance_name, class_name)) =
+            let keymap = if let Some((instance_name, class_name)) =
                 get_window_class(self.conn, focused_window)?
-                && let Some(bindings) = app_paste_keymaps
+                && let Some(keymap) = app_paste_keymaps
                     .get(&instance_name)
                     .or_else(|| app_paste_keymaps.get(&class_name))
             {
-                bindings
+                keymap
             } else {
-                &vec![Binding {
+                &vec![KeyStroke {
                     key: 'v' as u32,
                     modifiers: vec![Modifier::Control],
                 }]
             };
 
-            for binding in bindings {
-                for modifier in &binding.modifiers {
+            info!("pasting into {focused_window} using keymap: {keymap:?}");
+            for key_stroke in keymap {
+                for modifier in &key_stroke.modifiers {
                     key(KEY_PRESS_EVENT, keycode((*modifier).into())?)?;
                 }
-                key(KEY_PRESS_EVENT, keycode(Keysym::new(binding.key))?)?;
-                key(KEY_RELEASE_EVENT, keycode(Keysym::new(binding.key))?)?;
-                for modifier in binding.modifiers.iter().rev() {
+                key(KEY_PRESS_EVENT, keycode(Keysym::new(key_stroke.key))?)?;
+                key(KEY_RELEASE_EVENT, keycode(Keysym::new(key_stroke.key))?)?;
+                for modifier in key_stroke.modifiers.iter().rev() {
                     key(KEY_RELEASE_EVENT, keycode((*modifier).into())?)?;
                 }
             }
         } else if self.selection_atom == self.atoms.PRIMARY {
+            info!(
+                "pasting into {focused_window} using middle mouse button at {pointer_original_pos:?}"
+            );
             let pointer_current_pos = self.conn.query_pointer(self.screen.root)?.reply()?;
             move_pointer(pointer_original_pos.0, pointer_original_pos.1)?;
 
@@ -900,6 +991,7 @@ fn filter_mimes(mimes: HashMap<Atom, String>) -> HashMap<Atom, String> {
                 image_score = score;
             }
         } else if mime == "x-kde-passwordManagerHint" {
+            debug!("selection type is password, filtering out all targets");
             filtered_mimes.drain();
             return filtered_mimes;
         } else {

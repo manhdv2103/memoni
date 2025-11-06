@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use egui::Color32;
 use egui::ecolor::ParseHexColorError;
+use log::{debug, info};
 use make_optional::MakeOptional;
 use serde::Deserialize;
 use serde_with::{DisplayFromStr, FromInto, OneOrMany, serde_as};
@@ -36,7 +37,7 @@ pub struct Config {
     pub show_ribbon: bool,
 
     #[serde_as(as = "HashMap<_, OneOrMany<_>>")]
-    pub app_paste_keymaps: HashMap<String, Vec<Binding>>,
+    pub app_paste_keymaps: HashMap<String, Vec<KeyStroke>>,
 
     #[optional(optional_type)]
     pub layout: LayoutConfig,
@@ -202,9 +203,14 @@ impl Config {
         let config_path = match dirs::config_dir().map(|dir| dir.join("memoni").join("config.toml"))
         {
             Some(p) if p.exists() => p,
-            _ => return Ok(default_config),
+            _ => {
+                info!("config file not found, using default config");
+                debug!("default config: {default_config:#?}");
+                return Ok(default_config);
+            }
         };
 
+        info!("loading config from {config_path:?}");
         let config_content = fs::read_to_string(&config_path)?;
         let config_set: ConfigSet =
             toml::from_str(&config_content).context("Failed to parse config file")?;
@@ -216,6 +222,7 @@ impl Config {
                 SelectionType::PRIMARY => config_set.primary,
             });
 
+        debug!("config: {config:#?}");
         Ok(config)
     }
 }
@@ -223,7 +230,7 @@ impl Config {
 #[serde_as]
 #[derive(Deserialize, Debug)]
 #[serde(deny_unknown_fields)]
-pub struct Binding {
+pub struct KeyStroke {
     #[serde_as(as = "FromInto<CharOrNum>")]
     pub key: u32,
 

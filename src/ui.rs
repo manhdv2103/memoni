@@ -14,6 +14,7 @@ use egui::{
 };
 use fontconfig::Fontconfig;
 use image::{GenericImageView, RgbaImage};
+use log::{debug, error, info, log_enabled, trace, warn};
 use xdg_mime::SharedMimeInfo;
 
 use crate::{
@@ -82,11 +83,13 @@ pub struct Ui<'a> {
 
 impl<'a> Ui<'a> {
     pub fn new(config: &'a Config) -> Result<Self> {
+        info!("creating egui context");
         let egui_ctx = egui::Context::default();
         let layout = &config.layout;
         let font = &config.font;
         let theme = &config.theme;
 
+        info!("setting global egui style");
         egui_ctx.style_mut(|style| {
             // style.debug.debug_on_hover = true;
             style.spacing.button_padding = layout.button_padding.into();
@@ -115,11 +118,12 @@ impl<'a> Ui<'a> {
         });
 
         let mut fonts = FontDefinitions::default();
+
+        info!("setting default fonts");
         fonts.font_data.insert(
             "NotoSans-Regular".to_owned(),
             Arc::new(FontData::from_static(NOTO_SANS)),
         );
-
         fonts.font_data.insert(
             "NotoEmoji-Regular".to_owned(),
             Arc::new(FontData::from_static(NOTO_EMOJI).tweak(FontTweak {
@@ -127,7 +131,6 @@ impl<'a> Ui<'a> {
                 ..Default::default()
             })),
         );
-
         // Mostly for the newline symbol (⏎)
         fonts.font_data.insert(
             "NotoSansSymbols2-Regular".to_owned(),
@@ -139,8 +142,12 @@ impl<'a> Ui<'a> {
 
         let mut font_family_names = vec![];
 
+        if !font.families.is_empty() {
+            info!("setting custom fonts")
+        }
         for (i, font_family) in font.families.iter().enumerate() {
             if let Some(font_path) = Self::find_font(font_family)? {
+                debug!("found font family '{font_family}' file: {font_path:?}");
                 fonts.font_data.insert(
                     font_family.clone(),
                     Arc::new(FontData::from_owned(fs::read(font_path)?).tweak(FontTweak {
@@ -151,7 +158,7 @@ impl<'a> Ui<'a> {
 
                 font_family_names.push(font_family.clone());
             } else {
-                eprintln!("Warning: font family '{}' not found", font_family);
+                warn!("font family '{font_family}' not found");
             }
         }
 
@@ -164,6 +171,7 @@ impl<'a> Ui<'a> {
             .insert(FontFamily::Proportional, font_family_names);
         egui_ctx.set_fonts(fonts);
 
+        debug!("loading fallback images");
         let fallback_img = image::load_from_memory(FALLBACK_IMG_BYTES)?.to_rgba8();
         let fallback_file = image::load_from_memory(FALLBACK_FILE_BYTES)?.to_rgba8();
         let fallback_dir = image::load_from_memory(FALLBACK_DIR_BYTES)?.to_rgba8();
@@ -195,10 +203,14 @@ impl<'a> Ui<'a> {
         pat.add_integer(fontconfig::FC_WEIGHT, fontconfig::FC_WEIGHT_REGULAR);
         pat.add_integer(fontconfig::FC_SLANT, fontconfig::FC_SLANT_ROMAN);
         pat.add_integer(fontconfig::FC_WIDTH, fontconfig::FC_WIDTH_NORMAL);
-
         let fonts = fontconfig::list_fonts(&pat, None);
-        let font = fonts.iter().next();
 
+        if log_enabled!(log::Level::Trace) {
+            trace!("found all fonts with pattern {pat:?}:");
+            fonts.print();
+        }
+
+        let font = fonts.iter().next();
         Ok(font.and_then(|f| f.filename().map(PathBuf::from)))
     }
 
@@ -209,6 +221,7 @@ impl<'a> Ui<'a> {
         flow: UiFlow,
         mut on_paste: impl FnMut(&SelectionItem),
     ) -> Result<FullOutput> {
+        trace!("painting ui with flow {flow:?}");
         let mut run_error = None;
         let layout = &self.config.layout;
 
@@ -412,13 +425,6 @@ impl<'a> Ui<'a> {
         }
     }
 
-    pub fn reset(&mut self) {
-        self.active_idx = 0;
-        self.hovered_idx = None;
-        self.is_initial_run = true;
-        self.shows_scroll_bar = false;
-    }
-
     fn container(
         ctx: &egui::Context,
         config: &Config,
@@ -512,7 +518,16 @@ impl<'a> Ui<'a> {
         ));
     }
 
+    pub fn reset(&mut self) {
+        info!("resetting ui states");
+        self.active_idx = 0;
+        self.hovered_idx = None;
+        self.is_initial_run = true;
+        self.shows_scroll_bar = false;
+    }
+
     pub fn build_button_widget(&mut self, item: &SelectionItem) -> Result<()> {
+        trace!("building button widget for item {}", item.id);
         let Ui {
             egui_ctx: ctx,
             config,
@@ -547,7 +562,10 @@ impl<'a> Ui<'a> {
                         }
                     }
                     Err(err) => {
-                        eprintln!("error: image with mime {}: {}", mime, err);
+                        error!(
+                            "failed to load image with mime {mime} of item {}: {err}",
+                            item.id
+                        );
                         ImageInfo {
                             r#type: img_type,
                             size: None,
@@ -594,8 +612,8 @@ impl<'a> Ui<'a> {
                 })
                 .collect::<Vec<_>>();
             let mut path_iter = file_paths.iter();
-            if let Some(file) = path_iter.next() {
-                btn = btn.append_label(format_path_str(file));
+            if let Some(path) = path_iter.next() {
+                btn = btn.append_label(format_path_str(path));
             }
             if let Some(path) = path_iter.next() {
                 btn = btn.append_label(format_path_str(path));
@@ -611,7 +629,7 @@ impl<'a> Ui<'a> {
                 if !sublabel_text.is_empty() {
                     sublabel_text.push_str(" | ");
                 }
-                sublabel_text.push_str(&format!("+{} MORE...", more_count));
+                sublabel_text.push_str(&format!("+{more_count} MORE..."));
             }
 
             if !sublabel_text.is_empty() {
@@ -673,6 +691,7 @@ impl<'a> Ui<'a> {
         removed_items: I,
     ) {
         for item in removed_items {
+            trace!("removing button widget for item {}", item.id);
             self.button_widgets.remove(&item.id);
         }
     }
@@ -726,7 +745,7 @@ fn create_files_thumbnail(
         let size = Vec2::new((coord[2] - coord[0]).into(), (coord[3] - coord[1]).into());
 
         let file_thumb = get_file_thumbnail(file, size, is_dir).unwrap_or_else(|e| {
-            eprintln!("error: get file thumbnail for {}: {e}", file);
+            error!("failed to get file thumbnail for {file}: {e}");
             None
         });
         let fallback = if is_dir { fallback_dir } else { fallback_file };
@@ -753,25 +772,24 @@ fn get_file_thumbnail<P: AsRef<Path>>(
     } else {
         get_cached_thumbnail(&file)
             .unwrap_or_else(|e| {
-                eprintln!(
-                    "warning: cannot get cached thumbnail for {}: {e}",
-                    file.as_ref().to_string_lossy(),
+                warn!(
+                    "failed to get cached thumbnail for {:?}: {e}",
+                    file.as_ref()
                 );
                 None
             })
             .or_else(|| {
                 get_file_icon_path(&file).unwrap_or_else(|e| {
-                    eprintln!(
-                        "warning: cannot get icon for {}: {e}",
-                        file.as_ref().to_string_lossy(),
-                    );
+                    warn!("failed to get icon for {:?}: {e}", file.as_ref());
                     None
                 })
             })
     };
+    let Some(path) = thumb_path else {
+        return Ok(None);
+    };
 
-    if let Some(path) = thumb_path
-        && let Some(ext) = path.extension()
+    if let Some(ext) = path.extension()
         && (ext == "png" || ext == "svg")
     {
         let data = fs::read(&path)?;
@@ -781,6 +799,7 @@ fn get_file_thumbnail<P: AsRef<Path>>(
             Ok(Some(load_svg(&data, size_hint)?.0))
         }
     } else {
+        warn!("unsupported thumbnail file type, expected png or svg: {path:?}");
         Ok(None)
     }
 }
@@ -817,6 +836,11 @@ fn get_file_icon_path<P: AsRef<Path>>(file: P) -> Result<Option<PathBuf>> {
         }
     }
 
+    debug!(
+        "icon for {:?} with mime '{}' not found",
+        file.as_ref(),
+        mime
+    );
     Ok(None)
 }
 

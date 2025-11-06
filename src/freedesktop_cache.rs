@@ -4,6 +4,7 @@ use std::{
 };
 
 use anyhow::{Result, anyhow};
+use log::debug;
 use md5::{Digest, Md5};
 
 use crate::utils::{percent_encode, to_hex_string};
@@ -20,7 +21,7 @@ pub fn get_cached_thumbnail<P: AsRef<Path>>(file: P) -> Result<Option<PathBuf>> 
 
     let mut hasher = Md5::new();
     hasher.update(b"file://");
-    for component in path::absolute(file)?.components().skip(1) {
+    for component in path::absolute(&file)?.components().skip(1) {
         hasher.update(b"/");
         hasher.update(percent_encode(component.as_os_str().as_bytes()));
     }
@@ -35,5 +36,10 @@ pub fn get_cached_thumbnail<P: AsRef<Path>>(file: P) -> Result<Option<PathBuf>> 
         }
     }
 
+    debug!(
+        "cached thumbnail for {:?} with name '{}' not found",
+        file.as_ref(),
+        thumbnail_filename
+    );
     Ok(None)
 }

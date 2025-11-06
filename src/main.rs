@@ -1,4 +1,5 @@
-use anyhow::{Result, bail};
+use anyhow::{Result, anyhow, bail};
+use log::{LevelFilter, debug, info, warn};
 use memoni::config::Config;
 use memoni::input::Input;
 use memoni::persistence::Persistence;
@@ -37,29 +38,50 @@ enum Args {
     Server(ServerArgs),
 }
 
+#[derive(Debug)]
 struct ClientArgs {
     selection: SelectionType,
 }
 
+#[derive(Debug)]
 struct ServerArgs {
     selection: SelectionType,
 }
 
 fn main() -> Result<()> {
-    let args = parse_args()?;
+    let (args, log_level) = parse_args()?;
 
+    env_logger::Builder::new()
+        .filter_level(log_level)
+        .target(env_logger::Target::Stdout)
+        .init();
+    info!("logger initialized at level: {log_level}");
+
+    debug!("ensuring socket dir exists: {SOCKET_DIR}");
     let socket_dir = Path::new(SOCKET_DIR);
     fs::create_dir_all(socket_dir)?;
 
     match args {
-        Args::Client(args) => client(args, socket_dir)?,
-        Args::Server(args) => server(args, socket_dir)?,
+        Args::Client(args) => {
+            info!("starting client mode with selection: {}", args.selection);
+            debug!("client args: {args:#?}");
+
+            let socket_path = socket_dir.join(format!("{}.sock", args.selection));
+            client(args, &socket_path)?
+        }
+        Args::Server(args) => {
+            info!("starting server mode with selection: {}", args.selection);
+            debug!("server args: {args:#?}");
+
+            let socket_path = socket_dir.join(format!("{}.sock", args.selection));
+            server(args, &socket_path)?
+        }
     }
 
     Ok(())
 }
 
-fn parse_args() -> Result<Args> {
+fn parse_args() -> Result<(Args, LevelFilter)> {
     use lexopt::prelude::*;
 
     let mut parser = lexopt::Parser::from_env();
@@ -72,6 +94,7 @@ fn parse_args() -> Result<Args> {
     });
 
     let mut selection_type = SelectionType::CLIPBOARD;
+    let mut log_level = LevelFilter::Warn;
     while let Some(arg) = parser.next()? {
         match arg {
             Short('s') | Long("selection") => {
@@ -81,6 +104,14 @@ fn parse_args() -> Result<Args> {
                     "CLIPBOARD" => SelectionType::CLIPBOARD,
                     _ => bail!("invalid selection type \"{selection_str}\""),
                 };
+            }
+            Short('l') | Long("log-level") => {
+                log_level = parser.value()?.parse().map_err(|err| match err {
+                    lexopt::Error::ParsingFailed { value, .. } => {
+                        anyhow!("invalid log level \"{value}\"")
+                    }
+                    _ => err.into(),
+                })?;
             }
             Short('v') | Long("version") if !is_server_mode => {
                 println!("v{}", env!("CARGO_PKG_VERSION"));
@@ -97,6 +128,7 @@ USAGE:
 
 OPTIONS:
   -s, --selection TYPE    Sets selection type [possible values: CLIPBOARD, PRIMARY] [default: CLIPBOARD]
+  -l, --log-level LEVEL   Sets log level [possible values: off, error, warn, info, debug, trace] [default: warn]
   -h, --help              Prints help information"
                     );
                 } else {
@@ -110,6 +142,7 @@ USAGE:
 
 OPTIONS:
   -s, --selection TYPE    Sets selection type [possible values: CLIPBOARD, PRIMARY] [default: CLIPBOARD]
+  -l, --log-level LEVEL   Sets log level [possible values: off, error, warn, info, debug, trace] [default: warn]
   -v, --version           Prints memoni version
   -h, --help              Prints help information"
                     );
@@ -121,20 +154,22 @@ OPTIONS:
         }
     }
 
-    Ok(if is_server_mode {
-        Args::Server(ServerArgs {
-            selection: selection_type,
-        })
-    } else {
-        Args::Client(ClientArgs {
-            selection: selection_type,
-        })
-    })
+    Ok((
+        if is_server_mode {
+            Args::Server(ServerArgs {
+                selection: selection_type,
+            })
+        } else {
+            Args::Client(ClientArgs {
+                selection: selection_type,
+            })
+        },
+        log_level,
+    ))
 }
 
-fn client(args: ClientArgs, socket_dir: &Path) -> Result<()> {
-    let socket_path = socket_dir.join(format!("{}.sock", args.selection));
-    if !fs::exists(&socket_path)? {
+fn client(args: ClientArgs, socket_path: &Path) -> Result<()> {
+    if !fs::exists(socket_path)? {
         eprintln!(
             "Error: memoni server for selection '{}' is not running",
             args.selection
@@ -142,14 +177,16 @@ fn client(args: ClientArgs, socket_dir: &Path) -> Result<()> {
         std::process::exit(1);
     }
 
-    let mut stream = UnixStream::connect(&socket_path)?;
+    debug!("connecting to socket: {socket_path:?}");
+    let mut stream = UnixStream::connect(socket_path)?;
+
+    info!("sending 'show_win' to server");
     stream.write_all(b"show_win")?;
 
     Ok(())
 }
 
-fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
-    let socket_path = socket_dir.join(format!("{}.sock", args.selection));
+fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
     let config = Config::load(args.selection)?;
 
     let window = X11Window::new(
@@ -171,14 +208,12 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
         // Debounce to merge consecutive items with similar text.
         args.selection == SelectionType::PRIMARY,
     )?;
-
     let mut ui = Ui::new(&config)?;
     for item in &selection.items {
         ui.build_button_widget(item)?;
     }
 
-    let mut signals = Signals::new(TERM_SIGNALS)?;
-    let (mut poll, socket_listener) = match create_poll(&window.conn, &socket_path, &mut signals) {
+    let (mut poll, socket_listener, mut signals) = match create_poll(&window.conn, socket_path) {
         Ok(res) => res,
         Err(err) => {
             if let Some(io_err) = err.downcast_ref::<io::Error>()
@@ -199,6 +234,8 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
     let main_loop_result = (|| -> Result<()> {
         let mut window_shown = false;
         let mut pointer_button_press_count = 0;
+
+        info!("starting main event loop");
         'main_loop: loop {
             let mut will_show_window = false;
             let mut will_hide_window = false;
@@ -223,24 +260,39 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
             for event in &poll_events {
                 match event.token() {
                     X11_TOKEN => {} // handled below
-                    SIGNAL_TOKEN => break 'main_loop,
+                    SIGNAL_TOKEN => {
+                        if let Some(raw_signal) = signals.pending().next()
+                            && let Some(signal) =
+                                rustix::process::Signal::from_named_raw(raw_signal)
+                        {
+                            info!("received {signal:?}, stopping main event loop");
+                            break 'main_loop;
+                        }
+                    }
                     MEMONI_TOKEN => {
+                        info!("accepting client connection");
                         let (mut stream, _) = socket_listener.accept()?;
+
                         let mut buf = [0u8; 1024];
                         match stream.read(&mut buf) {
                             Ok(0) => {
-                                // client closed immediately
+                                warn!("client closed without sending command");
                             }
                             Ok(n) => {
                                 let command = String::from_utf8_lossy(&buf[..n]);
                                 match command.as_ref() {
                                     "show_win" => {
+                                        info!("received client command: {command}, showing window");
                                         will_show_window = true;
                                     }
-                                    _ => eprintln!("Warning: unknown client command: {command}"),
+                                    _ => {
+                                        warn!("unknown client command: {command}");
+                                    }
                                 }
                             }
-                            Err(e) => eprintln!("Warning: failed to read client command: {e}"),
+                            Err(e) => {
+                                warn!("failed to read client command: {e:?}");
+                            }
                         }
                     }
                     _ => unreachable!(),
@@ -249,18 +301,14 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
 
             while let Some(event) = window.conn.poll_for_event()? {
                 if let Event::Error(err) = event {
-                    eprintln!("Warning: X11 error {err:?}");
-                    continue;
-                }
-
-                if let Event::DestroyNotify(_) = event {
-                    will_hide_window = true;
+                    warn!("received X11 error: {err:?}");
                     continue;
                 }
 
                 if let Event::MappingNotify(ev) = event
                     && (ev.request == Mapping::KEYBOARD || ev.request == Mapping::MODIFIER)
                 {
+                    debug!("keyboard mapping changed; rebuilding X11KeyConverter");
                     let _ = mem::replace(
                         &mut *key_converter.borrow_mut(),
                         X11KeyConverter::new(&window.conn)?,
@@ -275,6 +323,7 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
                 if let Event::ButtonRelease(ev) = event {
                     if pointer_button_press_count == 0 {
                         if ev.event != window.win_id {
+                            info!("pointer released outside window, hiding window");
                             will_hide_window = true;
                         }
                     } else {
@@ -298,6 +347,7 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
                     if let egui::Event::Key { key, .. } = input_event
                         && *key == egui::Key::Escape
                     {
+                        info!("received Escape key, hiding window");
                         will_hide_window = true;
                     }
                 }
@@ -320,6 +370,7 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
                     &selection.items,
                     ui_flow,
                     |selected| {
+                        info!("paste item selected, hiding window");
                         will_hide_window = true;
                         paste_item_id = Some(selected.id);
                     },
@@ -348,32 +399,43 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
         Ok(())
     })();
 
+    info!("cleaning up");
     window.ungrab_input()?;
     gl_context.destroy();
-    fs::remove_file(&socket_path)?;
+    debug!("removing socket file");
+    fs::remove_file(socket_path)?;
 
     main_loop_result
 }
 
-fn create_poll<P: AsRef<Path>>(
+fn create_poll<P: AsRef<Path> + std::fmt::Debug>(
     conn: &XCBConnection,
     socket_path: P,
-    signals: &mut Signals,
-) -> Result<(mio::Poll, UnixListener)> {
+) -> Result<(mio::Poll, UnixListener, Signals)> {
     let poll = mio::Poll::new()?;
 
+    debug!("registering X11 events polling source");
     let conn_fd = conn.as_fd().as_raw_fd();
     poll.registry()
         .register(&mut SourceFd(&conn_fd), X11_TOKEN, mio::Interest::READABLE)?;
 
+    debug!(
+        "registering signals polling source: {:?}",
+        TERM_SIGNALS
+            .iter()
+            .map(|s| rustix::process::Signal::from_named_raw(*s).unwrap())
+            .collect::<Vec<_>>()
+    );
+    let mut signals = Signals::new(TERM_SIGNALS)?;
     poll.registry()
-        .register(signals, SIGNAL_TOKEN, mio::Interest::READABLE)?;
+        .register(&mut signals, SIGNAL_TOKEN, mio::Interest::READABLE)?;
 
-    // socket file exists but isn't in use
+    debug!("registering socket source: {socket_path:?}");
     if fs::exists(&socket_path)?
         && let Err(err) = UnixStream::connect(&socket_path)
         && err.kind() == io::ErrorKind::ConnectionRefused
     {
+        debug!("socket file exists but isn't in use, removing it");
         fs::remove_file(&socket_path)?;
     }
 
@@ -385,5 +447,5 @@ fn create_poll<P: AsRef<Path>>(
         mio::Interest::READABLE,
     )?;
 
-    Ok((poll, listener))
+    Ok((poll, listener, signals))
 }
