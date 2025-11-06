@@ -349,6 +349,7 @@ fn server(args: ServerArgs, socket_dir: &Path) -> Result<()> {
     })();
 
     window.ungrab_input()?;
+    gl_context.destroy();
     fs::remove_file(&socket_path)?;
 
     main_loop_result

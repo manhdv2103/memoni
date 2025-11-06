@@ -146,4 +146,8 @@ impl OpenGLContext {
         self.surface.swap_buffers(&self.context)?;
         Ok(())
     }
+
+    pub fn destroy(&mut self) {
+        self.painter.destroy();
+    }
 }
