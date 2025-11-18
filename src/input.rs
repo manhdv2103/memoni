@@ -1,5 +1,3 @@
-use std::{cell::RefCell, rc::Rc};
-
 use crate::{utils::keysym_to_egui_key, x11_key_converter::X11KeyConverter, x11_window::X11Window};
 use anyhow::Result;
 use egui::{Event, MouseWheelUnit, PointerButton, Pos2, RawInput, Rect, Vec2};
@@ -10,11 +8,11 @@ use xkeysym::Keysym;
 pub struct Input<'a> {
     pub egui_input: RawInput,
     window: &'a X11Window<'a>,
-    key_converter: Rc<RefCell<X11KeyConverter>>,
+    key_converter: &'a X11KeyConverter<'a>,
 }
 
 impl<'a> Input<'a> {
-    pub fn new(window: &'a X11Window, key_converter: Rc<RefCell<X11KeyConverter>>) -> Result<Self> {
+    pub fn new(window: &'a X11Window, key_converter: &'a X11KeyConverter) -> Result<Self> {
         let egui_input = RawInput {
             focused: true,
             screen_rect: Some(Rect::from_min_size(
@@ -77,11 +75,7 @@ impl<'a> Input<'a> {
                 let pressed = matches!(event, X11Event::KeyPress(_));
                 let keycode = ev.detail;
 
-                if let Some(keysym) = self
-                    .key_converter
-                    .borrow()
-                    .keycode_to_keysym(keycode.into())
-                {
+                if let Some(keysym) = self.key_converter.keycode_to_keysym(keycode.into()) {
                     if keysym.is_modifier_key() {
                         let mut modifiers_updated = false;
                         if keysym == Keysym::Alt_L || keysym == Keysym::Alt_R {

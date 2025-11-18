@@ -10,7 +10,6 @@ use std::{
     cell::RefCell,
     collections::{BTreeMap, HashMap, VecDeque},
     fmt, mem,
-    rc::Rc,
     time::{Duration, Instant},
 };
 
@@ -134,7 +133,7 @@ pub struct Selection<'a> {
 
     conn: &'a XCBConnection,
     screen: &'a Screen,
-    key_converter: Rc<RefCell<X11KeyConverter>>,
+    key_converter: &'a X11KeyConverter<'a>,
     config: &'a Config,
     merge_consecutive_similar_items: bool,
     selection_atom: Atom,
@@ -152,7 +151,7 @@ impl<'a> Selection<'a> {
     pub fn new(
         initial_items: VecDeque<SelectionItem>,
         window: &'a X11Window,
-        key_converter: Rc<RefCell<X11KeyConverter>>,
+        key_converter: &'a X11KeyConverter,
         selection_type: SelectionType,
         config: &'a Config,
         merge_consecutive_similar_items: bool,
@@ -902,7 +901,6 @@ impl<'a> Selection<'a> {
         };
         let keycode = |keysym| {
             self.key_converter
-                .borrow()
                 .keysym_to_keycode(keysym)
                 .map(|kc| kc.raw() as u8)
                 .ok_or_else(|| {

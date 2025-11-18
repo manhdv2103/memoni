@@ -11,10 +11,7 @@ use memoni::{opengl_context::OpenGLContext, selection::SelectionType};
 use mio::unix::SourceFd;
 use signal_hook::consts::TERM_SIGNALS;
 use signal_hook_mio::v1_0::Signals;
-use std::cell::RefCell;
-use std::mem;
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::rc::Rc;
 use std::{
     ffi::OsStr,
     fs,
@@ -195,13 +192,13 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
         args.selection == SelectionType::PRIMARY,
     )?;
     let mut gl_context = unsafe { OpenGLContext::new(&window, &config)? };
-    let key_converter = Rc::new(RefCell::new(X11KeyConverter::new(&window.conn)?));
-    let mut input = Input::new(&window, key_converter.clone())?;
+    let key_converter = X11KeyConverter::new(&window.conn)?;
+    let mut input = Input::new(&window, &key_converter)?;
     let persistence = Persistence::new(args.selection)?;
     let mut selection = Selection::new(
         persistence.load_selection_items()?,
         &window,
-        key_converter.clone(),
+        &key_converter,
         args.selection,
         &config,
         // XFixes sends a SelectionNotify for each change while the user drags the mouse to adjust selection.
@@ -308,11 +305,7 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
                 if let Event::MappingNotify(ev) = event
                     && (ev.request == Mapping::KEYBOARD || ev.request == Mapping::MODIFIER)
                 {
-                    debug!("keyboard mapping changed; rebuilding X11KeyConverter");
-                    let _ = mem::replace(
-                        &mut *key_converter.borrow_mut(),
-                        X11KeyConverter::new(&window.conn)?,
-                    );
+                    key_converter.update_mapping()?;
                 }
 
                 if let Event::ButtonPress(_) = event {
