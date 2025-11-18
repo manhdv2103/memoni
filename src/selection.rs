@@ -1,3 +1,9 @@
+/*
+    Heavily modified from Ringboard by Manh Vu on 2025-11-18
+    Original under Apache-2.0. See LICENSES/apache-ringboard
+    Original file: https://github.com/SUPERCILEX/clipboard-history/tree/c06ebd0837b4e42b9f9bbb8fbf41612365b76aaa/x11/src/main.rs
+*/
+
 extern crate x11rb;
 
 use std::{
@@ -29,8 +35,6 @@ use crate::{
     x11_key_converter::X11KeyConverter,
     x11_window::X11Window,
 };
-
-// Heavily modified from https://github.com/SUPERCILEX/clipboard-history/blob/master/x11/src/main.rs
 
 const HASH_SEED: usize = 0xfd9aadcf54cc0f35;
 const BINCODE_CONFIG: bincode::config::Configuration = bincode::config::standard();
