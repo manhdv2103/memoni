@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 
 use anyhow::Result;
+use log::{trace, warn};
 use x11rb::{
     connection::Connection,
     protocol::xproto::{
@@ -32,6 +33,8 @@ pub struct TransferWindowPool<'a> {
     atoms: Atoms,
     windows: VecDeque<TransferWindow>,
     counter: u8,
+    get_count: usize,
+    release_count: usize,
 }
 
 impl<'a> TransferWindowPool<'a> {
@@ -43,6 +46,8 @@ impl<'a> TransferWindowPool<'a> {
             atoms,
             windows: VecDeque::new(),
             counter: 0,
+            get_count: 0,
+            release_count: 0,
         };
 
         let initial_windows = vec![
@@ -57,13 +62,24 @@ impl<'a> TransferWindowPool<'a> {
     }
 
     pub fn get(&mut self) -> Result<TransferWindow> {
-        match self.windows.pop_front() {
+        let in_use = self.get_count - self.release_count;
+        if in_use > 100 {
+            warn!("transfer window pool might be leaking, in use items: {in_use}");
+        }
+
+        self.get_count += 1;
+        let window = match self.windows.pop_front() {
             Some(w) => Ok(w),
             None => self.create_window(),
-        }
+        };
+        trace!("getting transfer window: {window:?}");
+
+        window
     }
 
     pub fn release(&mut self, window: TransferWindow) {
+        trace!("releasing transfer window: {window:?}");
+        self.release_count += 1;
         self.windows.push_back(window);
     }
 
