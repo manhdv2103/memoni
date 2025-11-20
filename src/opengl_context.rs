@@ -5,9 +5,9 @@ use egui_glow::Painter;
 use glow::Context as GlowContext;
 use glutin::{
     config::ConfigTemplateBuilder,
-    context::{ContextApi, ContextAttributesBuilder, PossiblyCurrentContext},
+    context::{ContextApi, ContextAttributesBuilder, NotCurrentContext, PossiblyCurrentContext},
     display::Display,
-    prelude::{GlDisplay as _, NotCurrentGlContext as _},
+    prelude::{GlDisplay as _, NotCurrentGlContext, PossiblyCurrentGlContext},
     surface::{GlSurface as _, Surface, SurfaceAttributesBuilder, WindowSurface},
 };
 use log::{info, trace};
@@ -19,24 +19,33 @@ use std::{
     sync::Arc,
 };
 
-pub struct OpenGLContext {
-    pub display: Display,
+pub struct OpenGLContext<'a> {
     pub dimensions: [u32; 2],
     pub background: (f32, f32, f32),
-    pub surface: Surface<WindowSurface>,
-    pub context: PossiblyCurrentContext,
-    pub gl: Arc<GlowContext>,
     pub painter: Painter,
+    window: &'a X11Window<'a>,
+    display: Display,
+    config: glutin::config::Config,
+    surface: Surface<WindowSurface>,
+    context: Option<PossiblyCurrentContext>,
+    gl: Arc<GlowContext>,
 }
 
-impl OpenGLContext {
-    pub unsafe fn new(window: &X11Window, config: &Config) -> Result<Self> {
+impl<'a> OpenGLContext<'a> {
+    pub fn new(window: &'a X11Window, config: &Config) -> Result<Self> {
         info!("creating GL display via EGL");
+
+        let background_color: Color32 = config.theme.background.into();
+        let (r, g, b, _) = background_color.to_tuple();
+        let dimensions = [
+            config.layout.window_dimensions.width as _,
+            config.layout.window_dimensions.height as _,
+        ];
+
         let display_handle = XcbDisplayHandle::new(
             NonNull::new(window.conn.get_raw_xcb_connection()),
             window.screen_num as _,
         );
-        let window_handle = XcbWindowHandle::new(NonZero::new(window.win_id).unwrap());
 
         // TODO: switch to glx for transparency
         let gl_display = unsafe {
@@ -63,25 +72,74 @@ impl OpenGLContext {
             .with_context_api(ContextApi::OpenGl(Some(glutin::context::Version::new(
                 3, 3,
             ))))
-            .build(Some(RawWindowHandle::Xcb(window_handle)));
+            .build(None);
+        let context = unsafe { gl_display.create_context(&display_config, &attrs)? };
+
+        info!("creating egui_glow painter");
+        let (painter, surface, context, gl) = Self::create_painter(
+            window.win_id.get(),
+            &gl_display,
+            &display_config,
+            context,
+            dimensions,
+        )?;
+
+        Ok(OpenGLContext {
+            window,
+            display: gl_display,
+            config: display_config,
+            dimensions,
+            background: (r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0),
+            surface,
+            context: Some(context),
+            gl,
+            painter,
+        })
+    }
+
+    pub fn recreate_painter(&mut self) -> Result<()> {
+        info!("recreating egui_glow painter");
+
+        self.painter.destroy();
+        let not_current_ctx = self.context.take().unwrap().make_not_current()?;
+
+        let (painter, surface, context, gl) = Self::create_painter(
+            self.window.win_id.get(),
+            &self.display,
+            &self.config,
+            not_current_ctx,
+            self.dimensions,
+        )?;
+
+        self.painter = painter;
+        self.surface = surface;
+        self.context = Some(context);
+        self.gl = gl;
+
+        Ok(())
+    }
+
+    fn create_painter(
+        win_id: u32,
+        gl_display: &Display,
+        display_config: &glutin::config::Config,
+        ctx: NotCurrentContext,
+        dimensions: [u32; 2],
+    ) -> Result<(
+        Painter,
+        Surface<WindowSurface>,
+        PossiblyCurrentContext,
+        Arc<GlowContext>,
+    )> {
+        let window_handle = XcbWindowHandle::new(NonZero::new(win_id).unwrap());
 
         let surface_attrs = SurfaceAttributesBuilder::<WindowSurface>::new().build(
             RawWindowHandle::Xcb(window_handle),
-            NonZero::new(config.layout.window_dimensions.width)
-                .unwrap()
-                .into(),
-            NonZero::new(config.layout.window_dimensions.height)
-                .unwrap()
-                .into(),
+            NonZero::new(dimensions[0]).unwrap(),
+            NonZero::new(dimensions[1]).unwrap(),
         );
-
-        let surface = unsafe { gl_display.create_window_surface(&display_config, &surface_attrs)? };
-
-        let ctx: PossiblyCurrentContext = unsafe {
-            gl_display
-                .create_context(&display_config, &attrs)?
-                .make_current(&surface)?
-        };
+        let surface = unsafe { gl_display.create_window_surface(display_config, &surface_attrs)? };
+        let ctx = ctx.make_current(&surface)?;
 
         surface.set_swap_interval(&ctx, glutin::surface::SwapInterval::Wait(NonZeroU32::MIN))?;
 
@@ -92,24 +150,9 @@ impl OpenGLContext {
         };
         let gl = Arc::new(gl);
 
-        info!("creating egui_glow painter");
         let painter = Painter::new(gl.clone(), "", None, true)?;
 
-        let background_color: Color32 = config.theme.background.into();
-        let (r, g, b, _) = background_color.to_tuple();
-
-        Ok(OpenGLContext {
-            display: gl_display,
-            dimensions: [
-                config.layout.window_dimensions.width as _,
-                config.layout.window_dimensions.height as _,
-            ],
-            background: (r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0),
-            surface,
-            context: ctx,
-            gl,
-            painter,
-        })
+        Ok((painter, surface, ctx, gl))
     }
 
     pub fn render(
@@ -120,34 +163,25 @@ impl OpenGLContext {
         trace!("rendering frame");
         let egui::FullOutput {
             platform_output: _,
-            mut textures_delta,
+            textures_delta,
             mut shapes,
             pixels_per_point,
             viewport_output: _,
         } = full_output;
 
         let (r, g, b) = self.background;
-        unsafe {
-            use glow::HasContext as _;
-            self.gl.clear_color(r, g, b, 1.0);
-            self.gl.clear(glow::COLOR_BUFFER_BIT);
-        }
-
-        let mut textures_delta = std::mem::take(&mut textures_delta);
-        for (id, image_delta) in textures_delta.set {
-            self.painter.set_texture(id, &image_delta);
-        }
+        self.painter.clear(self.dimensions, [r, g, b, 1.0]);
 
         let shapes = std::mem::take(&mut shapes);
         let clipped_primitives = egui_ctx.tessellate(shapes, pixels_per_point);
-        self.painter
-            .paint_primitives(self.dimensions, pixels_per_point, &clipped_primitives);
+        self.painter.paint_and_update_textures(
+            self.dimensions,
+            pixels_per_point,
+            &clipped_primitives,
+            &textures_delta,
+        );
 
-        for id in textures_delta.free.drain(..) {
-            self.painter.free_texture(id);
-        }
-
-        self.surface.swap_buffers(&self.context)?;
+        self.surface.swap_buffers(self.context.as_ref().unwrap())?;
         trace!("frame rendered");
 
         Ok(())

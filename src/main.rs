@@ -191,7 +191,7 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
         args.selection,
         args.selection == SelectionType::PRIMARY,
     )?;
-    let mut gl_context = unsafe { OpenGLContext::new(&window, &config)? };
+    let mut gl_context = OpenGLContext::new(&window, &config)?;
     let key_converter = X11KeyConverter::new(&window.conn)?;
     let mut input = Input::new(&window, &key_converter)?;
     let persistence = Persistence::new(args.selection)?;
@@ -302,10 +302,27 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
                     continue;
                 }
 
+                if let Event::DestroyNotify(ev) = event
+                    && ev.window == window.win_id.get()
+                {
+                    warn!("main window {} got destroyed", ev.window);
+                    window.recreate_main_window()?;
+                    gl_context.recreate_painter()?;
+
+                    input = Input::new(&window, &key_converter)?;
+                    ui.reset_context();
+                    for item in &selection.items {
+                        ui.build_button_widget(item)?;
+                    }
+
+                    continue;
+                }
+
                 if let Event::MappingNotify(ev) = event
                     && (ev.request == Mapping::KEYBOARD || ev.request == Mapping::MODIFIER)
                 {
                     key_converter.update_mapping()?;
+                    continue;
                 }
 
                 if let Event::ButtonPress(_) = event {
@@ -315,7 +332,7 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
                 // When clicking outside of the window, only a release event is sent
                 if let Event::ButtonRelease(ev) = event {
                     if pointer_button_press_count == 0 {
-                        if ev.event != window.win_id {
+                        if ev.event != window.win_id.get() {
                             info!("pointer released outside window, hiding window");
                             will_hide_window = true;
                         }
@@ -375,14 +392,18 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
                 window.show_window()?;
                 window.grab_input()?;
                 window.enable_events()?;
+                window.conn.flush()?;
                 window_shown = true;
+                info!("window shown");
             }
 
             if will_hide_window {
                 window.hide_window()?;
                 window.ungrab_input()?;
                 window.disable_events()?;
+                window.conn.flush()?;
                 window_shown = false;
+                info!("window hidden");
             }
 
             if let Some(id) = paste_item_id {

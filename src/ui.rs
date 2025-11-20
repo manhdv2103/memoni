@@ -71,6 +71,7 @@ const NOTO_EMOJI: &[u8] = include_bytes!(concat!(
 pub struct Ui<'a> {
     pub egui_ctx: egui::Context,
     config: &'a Config,
+    fonts: FontDefinitions,
     item_ids: Vec<egui::Id>,
     hovered_idx: Option<usize>,
     active_idx: usize,
@@ -84,39 +85,8 @@ pub struct Ui<'a> {
 impl<'a> Ui<'a> {
     pub fn new(config: &'a Config) -> Result<Self> {
         info!("creating egui context");
-        let egui_ctx = egui::Context::default();
-        let layout = &config.layout;
+        let egui_ctx = Self::create_egui_context(config);
         let font = &config.font;
-        let theme = &config.theme;
-
-        info!("setting global egui style");
-        egui_ctx.style_mut(|style| {
-            // style.debug.debug_on_hover = true;
-            style.spacing.button_padding = layout.button_padding.into();
-            style.spacing.item_spacing = layout.button_spacing.into();
-            style.interaction.selectable_labels = false;
-
-            style.visuals.override_text_color = Some(theme.foreground.into());
-            for widget in [
-                &mut style.visuals.widgets.inactive,
-                &mut style.visuals.widgets.hovered,
-                &mut style.visuals.widgets.active,
-            ] {
-                widget.fg_stroke.color = theme.foreground.into();
-                widget.weak_bg_fill = theme.button_background.into();
-                widget.corner_radius = CornerRadius::same(layout.button_corner_radius);
-                widget.bg_stroke = Stroke::NONE;
-                widget.expansion = 0.0;
-            }
-            style.visuals.widgets.active.weak_bg_fill = theme.button_active_background.into();
-
-            for text_style in [egui::TextStyle::Body, egui::TextStyle::Button] {
-                if let Some(font_id) = style.text_styles.get_mut(&text_style) {
-                    *font_id = egui::FontId::proportional(font.size);
-                }
-            }
-        });
-
         let mut fonts = FontDefinitions::default();
 
         info!("setting default fonts");
@@ -169,7 +139,7 @@ impl<'a> Ui<'a> {
         fonts
             .families
             .insert(FontFamily::Proportional, font_family_names);
-        egui_ctx.set_fonts(fonts);
+        egui_ctx.set_fonts(fonts.clone());
 
         debug!("loading fallback images");
         let fallback_img = image::load_from_memory(FALLBACK_IMG_BYTES)?.to_rgba8();
@@ -179,6 +149,7 @@ impl<'a> Ui<'a> {
         Ok(Ui {
             egui_ctx,
             config,
+            fonts,
             item_ids: vec![],
             hovered_idx: None,
             active_idx: 0,
@@ -192,6 +163,53 @@ impl<'a> Ui<'a> {
                 directory: fallback_dir,
             },
         })
+    }
+
+    pub fn reset_context(&mut self) {
+        info!("recreating egui context");
+        let egui_ctx = Self::create_egui_context(self.config);
+        egui_ctx.set_fonts(self.fonts.clone());
+        self.egui_ctx = egui_ctx;
+
+        debug!("clearing button widgets");
+        self.button_widgets.clear();
+    }
+
+    fn create_egui_context(config: &Config) -> egui::Context {
+        let egui_ctx = egui::Context::default();
+        let layout = &config.layout;
+        let font = &config.font;
+        let theme = &config.theme;
+
+        info!("setting global egui style");
+        egui_ctx.style_mut(|style| {
+            // style.debug.debug_on_hover = true;
+            style.spacing.button_padding = layout.button_padding.into();
+            style.spacing.item_spacing = layout.button_spacing.into();
+            style.interaction.selectable_labels = false;
+
+            style.visuals.override_text_color = Some(theme.foreground.into());
+            for widget in [
+                &mut style.visuals.widgets.inactive,
+                &mut style.visuals.widgets.hovered,
+                &mut style.visuals.widgets.active,
+            ] {
+                widget.fg_stroke.color = theme.foreground.into();
+                widget.weak_bg_fill = theme.button_background.into();
+                widget.corner_radius = CornerRadius::same(layout.button_corner_radius);
+                widget.bg_stroke = Stroke::NONE;
+                widget.expansion = 0.0;
+            }
+            style.visuals.widgets.active.weak_bg_fill = theme.button_active_background.into();
+
+            for text_style in [egui::TextStyle::Body, egui::TextStyle::Button] {
+                if let Some(font_id) = style.text_styles.get_mut(&text_style) {
+                    *font_id = egui::FontId::proportional(font.size);
+                }
+            }
+        });
+
+        egui_ctx
     }
 
     fn find_font(font_family: &str) -> Result<Option<PathBuf>> {

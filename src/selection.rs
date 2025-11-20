@@ -131,7 +131,7 @@ impl<S, M> Task<S, M> {
 pub struct Selection<'a> {
     pub items: VecDeque<SelectionItem>,
 
-    conn: &'a XCBConnection,
+    window: &'a X11Window<'a>,
     screen: &'a Screen,
     key_converter: &'a X11KeyConverter<'a>,
     config: &'a Config,
@@ -140,7 +140,6 @@ pub struct Selection<'a> {
     atoms: Atoms,
     request_tasks: HashMap<Window, Task<RequestTaskState, (Atom, Owner)>>,
     incr_paste_tasks: HashMap<(Window, Atom), Task<IncrPasteTaskState>>,
-    paste_window: Window,
     transfer_windows: TransferWindowPool<'a>,
     mime_atoms: RefCell<HashMap<String, Atom>>,
     paste_item_id: Option<u64>,
@@ -178,7 +177,7 @@ impl<'a> Selection<'a> {
 
         Ok(Selection {
             items: initial_items,
-            conn,
+            window,
             screen: &window.screen,
             key_converter,
             config,
@@ -187,7 +186,6 @@ impl<'a> Selection<'a> {
             atoms,
             request_tasks: HashMap::new(),
             incr_paste_tasks: HashMap::new(),
-            paste_window: window.win_id,
             transfer_windows: TransferWindowPool::new(conn, root)?,
             mime_atoms: RefCell::new(HashMap::new()),
             paste_item_id: None,
@@ -199,14 +197,15 @@ impl<'a> Selection<'a> {
         &mut self,
         event: &Event,
     ) -> Result<Option<(Option<&SelectionItem>, Vec<SelectionItem>)>> {
-        let conn = self.conn;
+        let conn = &self.window.conn;
+        let paste_window = self.window.win_id.get();
         let atoms = self.atoms;
 
         'blk: {
             match event {
                 // Capture copied data
                 Event::XfixesSelectionNotify(ev) => {
-                    if ev.owner == self.paste_window {
+                    if ev.owner == paste_window {
                         debug!("ignoring selection notification from ourselves");
                         break 'blk;
                     }
@@ -450,7 +449,7 @@ impl<'a> Selection<'a> {
 
                         // Empty property signals completion
                         if property.value.is_empty() {
-                            self.conn.delete_property(ev.window, transfer_atom)?;
+                            conn.delete_property(ev.window, transfer_atom)?;
                             task.state = RequestTaskState::PendingSelection { mimes, data };
 
                             return self.process_selection_data(
@@ -546,11 +545,8 @@ impl<'a> Selection<'a> {
                     supported_atoms.push(self.atoms.TARGETS);
                     let mut requested_data = None;
                     for (atom_name, data) in &item.data {
-                        let atom = get_or_create_mime_atom(
-                            self.conn,
-                            self.mime_atoms.get_mut(),
-                            atom_name,
-                        )?;
+                        let atom =
+                            get_or_create_mime_atom(conn, self.mime_atoms.get_mut(), atom_name)?;
                         if atom != x11rb::NONE {
                             supported_atoms.push(atom);
                         }
@@ -713,7 +709,7 @@ impl<'a> Selection<'a> {
                     }
                 }
                 Event::SelectionClear(event) => {
-                    if event.owner == self.paste_window && self.paste_item_id.is_some() {
+                    if event.owner == paste_window && self.paste_item_id.is_some() {
                         info!("lost selection ownership");
                     }
                 }
@@ -760,7 +756,8 @@ impl<'a> Selection<'a> {
 
         if let Some(&next_atom) = mimes.keys().next() {
             self.request_tasks.insert(transfer_window.id, task);
-            self.conn
+            self.window
+                .conn
                 .convert_selection(
                     transfer_window.id,
                     self.selection_atom,
@@ -874,22 +871,23 @@ impl<'a> Selection<'a> {
     }
 
     pub fn paste(&mut self, item_id: u64, pointer_original_pos: (i16, i16)) -> Result<()> {
-        let focused_window = self.conn.get_input_focus()?.reply()?.focus;
-        if focused_window == self.paste_window {
+        let conn = &self.window.conn;
+        let paste_window = self.window.win_id.get();
+
+        let focused_window = conn.get_input_focus()?.reply()?.focus;
+        if focused_window == paste_window {
             warn!("trying to paste into itself");
             return Ok(());
         }
 
-        self.conn
-            .set_selection_owner(self.paste_window, self.selection_atom, x11rb::CURRENT_TIME)?
+        conn.set_selection_owner(paste_window, self.selection_atom, x11rb::CURRENT_TIME)?
             .check()?;
 
         let key = |type_, code| {
-            self.conn
-                .xtest_fake_input(type_, code, x11rb::CURRENT_TIME, self.screen.root, 1, 1, 0)
+            conn.xtest_fake_input(type_, code, x11rb::CURRENT_TIME, self.screen.root, 1, 1, 0)
         };
         let move_pointer = |x, y| {
-            self.conn.xtest_fake_input(
+            conn.xtest_fake_input(
                 MOTION_NOTIFY_EVENT,
                 0,
                 x11rb::CURRENT_TIME,
@@ -914,7 +912,7 @@ impl<'a> Selection<'a> {
         if self.selection_atom == self.atoms.CLIPBOARD {
             let app_paste_keymaps = &self.config.app_paste_keymaps;
             let keymap = if let Some((instance_name, class_name)) =
-                get_window_class(self.conn, focused_window)?
+                get_window_class(conn, focused_window)?
                 && let Some(keymap) = app_paste_keymaps
                     .get(&instance_name)
                     .or_else(|| app_paste_keymaps.get(&class_name))
@@ -942,7 +940,7 @@ impl<'a> Selection<'a> {
             info!(
                 "pasting into {focused_window} using middle mouse button at {pointer_original_pos:?}"
             );
-            let pointer_current_pos = self.conn.query_pointer(self.screen.root)?.reply()?;
+            let pointer_current_pos = conn.query_pointer(self.screen.root)?.reply()?;
             move_pointer(pointer_original_pos.0, pointer_original_pos.1)?;
 
             // middle mouse button
@@ -951,7 +949,7 @@ impl<'a> Selection<'a> {
 
             move_pointer(pointer_current_pos.root_x, pointer_current_pos.root_y)?;
         }
-        self.conn.flush()?;
+        conn.flush()?;
 
         self.paste_item_id = Some(item_id);
 
