@@ -1,4 +1,5 @@
 use anyhow::{Result, anyhow, bail};
+use env_logger::TimestampPrecision;
 use log::{LevelFilter, debug, info, warn};
 use memoni::config::Config;
 use memoni::input::Input;
@@ -50,6 +51,7 @@ fn main() -> Result<()> {
 
     env_logger::Builder::new()
         .filter_level(log_level)
+        .format_timestamp(Some(TimestampPrecision::Millis))
         .target(env_logger::Target::Stdout)
         .init();
     info!("logger initialized at level: {log_level}");
