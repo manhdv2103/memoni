@@ -92,6 +92,8 @@ fn parse_args() -> Result<(Args, LevelFilter)> {
 
     let mut selection_type = SelectionType::CLIPBOARD;
     let mut log_level = LevelFilter::Warn;
+    let mut shows_help = false;
+    let mut shows_version = false;
     while let Some(arg) = parser.next()? {
         match arg {
             Short('s') | Long("selection") => {
@@ -111,12 +113,18 @@ fn parse_args() -> Result<(Args, LevelFilter)> {
                 })?;
             }
             Short('v') | Long("version") if !is_server_mode => {
-                println!("v{}", env!("CARGO_PKG_VERSION"));
-                std::process::exit(0);
+                shows_version = true;
             }
             Short('h') | Long("help") => {
-                if is_server_mode {
-                    println!(
+                shows_help = true;
+            }
+            _ => return Err(arg.unexpected().into()),
+        }
+    }
+
+    if shows_help {
+        if is_server_mode {
+            println!(
                         "\
 Start memoni server.
 
@@ -128,8 +136,8 @@ OPTIONS:
   -l, --log-level LEVEL   Sets log level [possible values: off, error, warn, info, debug, trace] [default: warn]
   -h, --help              Prints help information"
                     );
-                } else {
-                    println!(
+        } else {
+            println!(
                         "\
 Show memoni window if memoni server is running.
 To run in server mode, use: memoni server [OPTIONS]
@@ -143,12 +151,13 @@ OPTIONS:
   -v, --version           Prints memoni version
   -h, --help              Prints help information"
                     );
-                }
-
-                std::process::exit(0);
-            }
-            _ => return Err(arg.unexpected().into()),
         }
+        std::process::exit(0);
+    }
+
+    if shows_version {
+        println!("v{}", env!("CARGO_PKG_VERSION"));
+        std::process::exit(0);
     }
 
     Ok((
