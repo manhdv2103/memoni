@@ -9,8 +9,9 @@ use std::{
 
 use anyhow::{Result, anyhow};
 use egui::{
-    Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontTweak, FullOutput, Painter,
-    RawInput, Rect, RichText, Stroke, TextureHandle, Vec2, epaint, scroll_area::ScrollAreaOutput,
+    Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontTweak, FullOutput, Modifiers,
+    Painter, RawInput, Rect, RichText, Stroke, TextureHandle, Vec2, epaint,
+    scroll_area::ScrollAreaOutput,
 };
 use fontconfig::Fontconfig;
 use image::{GenericImageView, RgbaImage};
@@ -25,6 +26,15 @@ use crate::{
     utils::{is_image_mime, is_plaintext_mime, percent_decode, utf16le_to_string},
     widgets::clipboard_button::ClipboardButton,
 };
+
+trait ModifiersExtra {
+    fn ctrl_only(&self) -> bool;
+}
+impl ModifiersExtra for Modifiers {
+    fn ctrl_only(&self) -> bool {
+        self.ctrl && !(self.alt || self.shift)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UiFlow {
@@ -258,17 +268,17 @@ impl<'a> Ui<'a> {
                 if *pressed {
                     let focus_step = match key {
                         egui::Key::ArrowUp | egui::Key::K => -1,
-                        egui::Key::P if modifiers.ctrl => -1,
-                        egui::Key::Tab if modifiers.shift => -1,
+                        egui::Key::P if modifiers.ctrl_only() => -1,
+                        egui::Key::Tab if modifiers.shift_only() => -1,
                         egui::Key::ArrowDown | egui::Key::J => 1,
-                        egui::Key::N if modifiers.ctrl => 1,
+                        egui::Key::N if modifiers.ctrl_only() => 1,
                         egui::Key::Tab => 1,
 
                         // TODO: proper half-page/full-page step (based on window and item sizes)
-                        egui::Key::D if modifiers.ctrl => 5,
-                        egui::Key::U if modifiers.ctrl => -5,
-                        egui::Key::F if modifiers.ctrl => 10,
-                        egui::Key::B if modifiers.ctrl => -10,
+                        egui::Key::D if modifiers.ctrl_only() => 5,
+                        egui::Key::U if modifiers.ctrl_only() => -5,
+                        egui::Key::F if modifiers.ctrl_only() => 10,
+                        egui::Key::B if modifiers.ctrl_only() => -10,
                         _ => 0,
                     } * if flow == UiFlow::BottomToTop { -1 } else { 1 };
                     if focus_step != 0
