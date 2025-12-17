@@ -100,7 +100,7 @@ impl<'a> Input<'a> {
                     }
 
                     if let Some(key) = keysym_to_egui_key(Keysym::new(keysym.into())) {
-                        debug!("key pressed: {key:?}, keysym={keysym:?}, keycode={keycode}");
+                        debug!("key: {key:?}, pressed={pressed}, keysym={keysym:?}, keycode={keycode}");
                         break 'blk Some(Event::Key {
                             key,
                             physical_key: None,
