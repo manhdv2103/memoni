@@ -79,13 +79,20 @@ const NOTO_EMOJI: &[u8] = include_bytes!(concat!(
     "/assets/fonts/Noto_Emoji/NotoEmoji-Regular.ttf"
 ));
 
+#[derive(Debug)]
+struct ScrollAreaInfo {
+    rect: Rect,
+    content_rects: HashMap<u64, Rect>,
+    offset: f32,
+}
+
 pub struct Ui<'a> {
     pub egui_ctx: egui::Context,
     config: &'a Config,
     fonts: FontDefinitions,
     item_widget_ids: HashMap<u64, egui::Id>,
     is_active_by_hovered: bool,
-    scroll_area_output: Option<ScrollAreaOutput<()>>,
+    scroll_area_info: Option<ScrollAreaInfo>,
     is_initial_run: bool,
     shows_scroll_bar: bool,
     button_widgets: HashMap<u64, ClipboardButton>,
@@ -162,7 +169,7 @@ impl<'a> Ui<'a> {
             fonts,
             item_widget_ids: HashMap::new(),
             is_active_by_hovered: false,
-            scroll_area_output: None,
+            scroll_area_info: None,
             is_initial_run: true,
             shows_scroll_bar: false,
             button_widgets: HashMap::new(),
@@ -248,13 +255,20 @@ impl<'a> Ui<'a> {
         selection_items: &OrderedHashMap<u64, SelectionItem>,
         flow: UiFlow,
         mut on_paste: impl FnMut(&SelectionItem),
+        mut on_remove: impl FnMut(&SelectionItem),
     ) -> Result<FullOutput> {
         trace!("painting ui with flow {flow:?}");
         let mut run_error = None;
         let layout = &self.config.layout;
-
         let prev_active_id = *active_id;
-        let mut move_by_key = false;
+
+        let items_removed = selection_items.len() < self.item_widget_ids.len();
+        let active_item_removed = items_removed && !selection_items.contains_key(active_id);
+        let prev_active_rect = self
+            .scroll_area_info
+            .as_ref()
+            .and_then(|info| info.content_rects.get(&prev_active_id).cloned());
+
         let mut pointer_moved = false;
         egui_input.events.retain(|ev| {
             // We will handle key events ourself
@@ -282,9 +296,8 @@ impl<'a> Ui<'a> {
                         _ => 0,
                     } * if flow == UiFlow::BottomToTop { -1 } else { 1 };
                     if focus_step != 0
-                        && let Some(active_idx) = selection_items
-                            .iter()
-                            .position(|(id, _)| *id == *active_id)
+                        && let Some(active_idx) =
+                            selection_items.iter().position(|(id, _)| *id == *active_id)
                     {
                         // Reduce step size to 1 to help reorient user when wrapping while
                         // doing half-page/full-page scroll
@@ -314,13 +327,20 @@ impl<'a> Ui<'a> {
                             .get_by_index(new_active_idx as usize)
                             .unwrap()
                             .0;
-                        move_by_key = true;
+                        self.is_active_by_hovered = false;
                     }
 
                     if matches!(key, egui::Key::Enter | egui::Key::Space)
                         && let Some(item) = selection_items.get(active_id)
                     {
                         on_paste(item);
+                    }
+
+                    if matches!(key, egui::Key::D)
+                        && modifiers.shift_only()
+                        && let Some(item) = selection_items.get(active_id)
+                    {
+                        on_remove(item);
                     }
                 }
                 return false;
@@ -329,9 +349,9 @@ impl<'a> Ui<'a> {
             if let egui::Event::PointerMoved(pointer_pos) = ev {
                 pointer_moved = true;
                 if self
-                    .scroll_area_output
+                    .scroll_area_info
                     .as_ref()
-                    .map(|s| s.inner_rect.contains(*pointer_pos))
+                    .map(|s| s.rect.contains(*pointer_pos))
                     .unwrap_or(false)
                 {
                     self.shows_scroll_bar = true;
@@ -341,47 +361,110 @@ impl<'a> Ui<'a> {
             true
         });
 
+        if flow == UiFlow::BottomToTop && self.is_initial_run {
+            self.egui_ctx.request_discard(
+                "BottomToTop flow displays new items at the top of the list. When resetting \
+                 scroll to the bottom, we need to know the height of newly added items beforehand \
+                 to correctly calculate the required scroll offset.",
+            );
+        } else if items_removed {
+            self.egui_ctx
+                .request_discard("Recalculate scroll area's content size when items got removed");
+        }
+
         let full_output = self.egui_ctx.run(egui_input, |ctx| {
-            if let Some((current_hovered_id, _)) = ctx.viewport(|vp| {
-                self.item_widget_ids
-                    .iter()
-                    .find(|(_, widget_id)| vp.interact_widgets.hovered.contains(widget_id))
-            }) {
-                if move_by_key {
-                    self.is_active_by_hovered = false;
-                } else if !self.is_initial_run && (self.is_active_by_hovered || pointer_moved) {
+            let mut active_changed_by_hovering = false;
+            if !ctx.will_discard()
+                && (self.is_active_by_hovered || pointer_moved)
+                && !self.is_initial_run
+            {
+                let hovered_item = ctx.viewport(|vp| {
+                    self.item_widget_ids
+                        .iter()
+                        .find(|(_, widget_id)| vp.interact_widgets.hovered.contains(widget_id))
+                });
+                if let Some((&hovered_item_id, _)) = hovered_item {
                     self.is_active_by_hovered = true;
-                    *active_id = *current_hovered_id;
+                    *active_id = hovered_item_id;
+                    active_changed_by_hovering = true;
                 }
             }
 
-            let content_overflowed = self
-                .scroll_area_output
+            if !ctx.will_discard() && active_item_removed && !active_changed_by_hovering {
+                let nearest_item_id = if let Some(scroll_info) = &self.scroll_area_info
+                    && let Some(removed_rect) = prev_active_rect
+                {
+                    selection_items
+                        .iter()
+                        .filter_map(|(id, _)| {
+                            scroll_info.content_rects.get(id).map(|rect| {
+                                (*id, (rect.center().y - removed_rect.center().y).abs())
+                            })
+                        })
+                        .min_by(|(_, dist1), (_, dist2)| dist1.total_cmp(dist2))
+                        .map(|(id, _)| id)
+                } else {
+                    None
+                };
+
+                *active_id = nearest_item_id
+                    .or_else(|| selection_items.get_by_index(0).map(|(id, _)| *id))
+                    .unwrap_or(0);
+            }
+
+            let scroll_content_size = self
+                .scroll_area_info
                 .as_ref()
-                .map(|s| s.inner_rect.height() < s.content_size[1])
+                .map(|s| {
+                    let mut size = 0.0;
+                    for (item_id, _) in selection_items {
+                        size += s
+                            .content_rects
+                            .get(item_id)
+                            .map(|r| r.height())
+                            .unwrap_or(0.0);
+                        size += self.config.layout.button_spacing.y;
+                    }
+                    size -= self.config.layout.button_spacing.y;
+                    size += (self.config.layout.window_padding.y as f32) * 2.0;
+                    size
+                })
+                .unwrap_or(0.0);
+            let content_overflowed = self
+                .scroll_area_info
+                .as_ref()
+                .map(|s| s.rect.height() < scroll_content_size)
                 .unwrap_or(false);
 
-            let set_default_scroll_offset = self.is_initial_run
-                // offset items to the bottom
+            let sets_default_scroll_offset = self.is_initial_run
+                // Force items to be at the bottom of the window
                 || (flow == UiFlow::BottomToTop && !content_overflowed);
-            let set_active_scroll_offset = prev_active_id != *active_id;
-            let next_scroll_offset = if (set_default_scroll_offset || set_active_scroll_offset)
-                && let Some(scroll_area) = &self.scroll_area_output
-                && let Some(&active_widget_id) = self.item_widget_ids.get(active_id)
-                && let Some(active_rect) =
-                    ctx.viewport(|vp| vp.prev_pass.widgets.get(active_widget_id).map(|w| w.rect))
+            let sets_active_scroll_offset = prev_active_id != *active_id;
+            let next_scroll_offset = if (sets_default_scroll_offset
+                || sets_active_scroll_offset
+                || items_removed)
+                && let Some(scroll_area) = &self.scroll_area_info
             {
-                let scroll_rect = scroll_area.inner_rect;
-                let scroll_content_size = scroll_area.content_size[1];
-                let scroll_offset = scroll_area.state.offset[1];
+                let scroll_rect = scroll_area.rect;
+                let scroll_offset = scroll_area.offset;
 
-                if set_default_scroll_offset {
+                if sets_default_scroll_offset {
                     if flow == UiFlow::TopToBottom {
                         Some(0.0)
                     } else {
                         Some(scroll_content_size - scroll_rect.height())
                     }
-                } else if !scroll_rect.contains_rect(active_rect) {
+                } else
+                // Force content to be pushed down to fill the removed items' space when at the bottom of the scroll area
+                if items_removed
+                    && content_overflowed
+                    && scroll_offset + scroll_rect.height() > scroll_content_size
+                {
+                    Some(scroll_content_size - scroll_rect.height())
+                } else if let Some(active_item) = selection_items.get(active_id)
+                    && let Some(&active_rect) = scroll_area.content_rects.get(&active_item.id)
+                    && !scroll_rect.contains_rect(active_rect)
+                {
                     let padding = layout.window_padding.y as f32;
                     if active_rect.top() < scroll_rect.top() + padding {
                         Some(scroll_offset + active_rect.top() - padding)
@@ -397,9 +480,13 @@ impl<'a> Ui<'a> {
 
             self.item_widget_ids.clear();
 
-            let container_result = Self::container(ctx, self.config, next_scroll_offset,
-                self.shows_scroll_bar, |ui| {
-
+            let mut content_sizes = HashMap::new();
+            let container_result = Self::container(
+                ctx,
+                self.config,
+                next_scroll_offset,
+                self.shows_scroll_bar,
+                |ui| {
                     if selection_items.is_empty() {
                         ui.centered_and_justified(|ui| {
                             ui.add(egui::Label::new("Your clipboard history will appear here."))
@@ -414,17 +501,21 @@ impl<'a> Ui<'a> {
                         Box::new(selection_items.iter())
                     };
 
-                    for  (&id, item) in item_it {
+                    for (&id, item) in item_it {
                         let is_active = id == *active_id;
 
                         let btn = ui.add(
                             self.button_widgets
                                 .get(&item.id)
-                                .ok_or_else(|| anyhow!("missing button widget for item {}", item.id))?
+                                .ok_or_else(|| {
+                                    anyhow!("missing button widget for item {}", item.id)
+                                })?
                                 .clone()
-                                .is_active(is_active)
+                                .is_active(is_active),
                         );
+
                         self.item_widget_ids.insert(id, btn.id);
+                        content_sizes.insert(item.id, btn.rect);
 
                         if btn.clicked() {
                             on_paste(item);
@@ -432,18 +523,17 @@ impl<'a> Ui<'a> {
                     }
 
                     Ok(())
-                });
-
-            if flow == UiFlow::BottomToTop && self.is_initial_run {
-                self.egui_ctx.request_discard(
-                    "BottomToTop flow displays new items at the top of the list. When resetting \
-                     scroll to the bottom, we need to know the height of newly added items beforehand \
-                     to correctly calculate the required scroll offset.",
-                );
-            }
+                },
+            );
 
             match container_result {
-                Ok(scroll_area_output) => self.scroll_area_output = Some(scroll_area_output),
+                Ok(scroll_area_output) => {
+                    self.scroll_area_info = Some(ScrollAreaInfo {
+                        rect: scroll_area_output.inner_rect,
+                        content_rects: content_sizes,
+                        offset: scroll_area_output.state.offset[1],
+                    });
+                }
                 Err(err) => run_error = Some(err),
             }
         });

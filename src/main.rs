@@ -253,6 +253,7 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
             let mut will_show_window = false;
             let mut will_hide_window = false;
             let mut paste_item_id = None;
+            let mut remove_item_id = None;
 
             // non-blocking when window is visible, blocking otherwise
             let poll_timeout = if window_shown {
@@ -406,6 +407,9 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
                         will_hide_window = true;
                         paste_item_id = Some(selected.id);
                     },
+                    |selected| {
+                        remove_item_id = Some(selected.id);
+                    },
                 )?;
                 gl_context.render(&ui.egui_ctx, full_output)?;
             }
@@ -430,6 +434,10 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
 
             if let Some(id) = paste_item_id {
                 selection.paste(id, window.win_opened_pointer_pos.get())?;
+            }
+            if let Some(id) = remove_item_id {
+                selection.items.remove(&id);
+                persistence.save_selection_items(&selection.items)?;
             }
         }
         Ok(())
