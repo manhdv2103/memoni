@@ -8,7 +8,7 @@ extern crate x11rb;
 
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, HashMap, VecDeque},
+    collections::{BTreeMap, HashMap},
     fmt, mem,
     time::{Duration, Instant},
 };
@@ -23,12 +23,16 @@ use x11rb::protocol::{
 };
 use x11rb::wrapper::ConnectionExt as _;
 use x11rb::xcb_ffi::XCBConnection;
-use x11rb::{connection::Connection, protocol::xfixes};
-use x11rb::{connection::RequestConnection as _, protocol::xtest::ConnectionExt as _};
+use x11rb::{
+    connection::Connection,
+    connection::RequestConnection as _,
+    protocol::{xfixes, xtest::ConnectionExt as _},
+};
 use xkeysym::Keysym;
 
 use crate::{
     config::{Config, KeyStroke, Modifier},
+    ordered_hash_map::OrderedHashMap,
     transfer_window_pool::{TransferWindow, TransferWindowPool},
     utils::{image_mime_score, is_image_mime, is_plaintext_mime, plaintext_mime_score},
     x11_key_converter::X11KeyConverter,
@@ -129,7 +133,7 @@ impl<S, M> Task<S, M> {
 }
 
 pub struct Selection<'a> {
-    pub items: VecDeque<SelectionItem>,
+    pub items: OrderedHashMap<u64, SelectionItem>,
 
     window: &'a X11Window<'a>,
     screen: &'a Screen,
@@ -148,7 +152,7 @@ pub struct Selection<'a> {
 
 impl<'a> Selection<'a> {
     pub fn new(
-        initial_items: VecDeque<SelectionItem>,
+        initial_items: OrderedHashMap<u64, SelectionItem>,
         window: &'a X11Window,
         key_converter: &'a X11KeyConverter,
         selection_type: SelectionType,
@@ -536,7 +540,7 @@ impl<'a> Selection<'a> {
                         debug!("nothing to paste: no paste item id");
                         break 'blk reply(x11rb::NONE)?;
                     };
-                    let Some(item) = &self.items.iter().find(|i| i.id == item_id) else {
+                    let Some(item) = self.items.get(&item_id) else {
                         debug!("nothing to paste: no paste item");
                         break 'blk reply(x11rb::NONE)?;
                     };
@@ -662,9 +666,8 @@ impl<'a> Selection<'a> {
 
                             if let Some(data) = &self
                                 .items
-                                .iter()
-                                .find(|i| i.id == item_id)
-                                .and_then(|item| item.data.get(data_atom_name))
+                                .get(&item_id)
+                                .and_then(|i| i.data.get(data_atom_name))
                             {
                                 let end = offset.saturating_add(INCR_CHUNK_SIZE).min(data.len());
                                 let chunk = &data[*offset..end];
@@ -793,35 +796,39 @@ impl<'a> Selection<'a> {
             && let (mime, new_text) = data.iter().next().unwrap()
             && is_plaintext_mime(mime)
             // ---
-            && let Some(prev_item) = prev_item
+            && let Some((_, prev_item)) = prev_item
             && prev_item.data.len() == 1
             && let Some(prev_text) = prev_item.data.get(mime)
             // ---
             && (contains(new_text, prev_text) || contains(prev_text, new_text))
         {
             debug!("merging selection with the previous one");
-            removed.push(self.items.pop_front().unwrap());
+            removed.push(self.items.pop_front().unwrap().1);
         }
 
         let mut is_previously_seen = false;
         let mut new_item = None;
-        if let Some(idx) = self.items.iter().position(|i| i.id == new_item_id) {
+        if self.items.contains_key(&new_item_id) {
             debug!("selection is duplicated, removing old one");
-            let previous_seen_item = self.items.remove(idx).unwrap();
-            self.items.push_front(previous_seen_item);
+            let previous_seen_item = self.items.remove(&new_item_id).unwrap();
+            self.items.push_front(new_item_id, previous_seen_item);
 
             is_previously_seen = true;
         } else {
-            self.items.push_front(SelectionItem {
-                id: new_item_id,
-                data: mem::take(data),
-            });
+            self.items.push_front(
+                new_item_id,
+                SelectionItem {
+                    id: new_item_id,
+                    data: mem::take(data),
+                },
+            );
 
             if self.items.len() > self.config.item_limit {
-                removed.extend(self.items.split_off(self.config.item_limit));
+                let removed_map = self.items.split_off(self.config.item_limit);
+                removed.extend(removed_map.into_iter().map(|(_, i)| i));
             };
 
-            new_item = self.items.front();
+            new_item = self.items.front().map(|(_, i)| i);
         }
 
         info!("selection transfer completed with new selection: {new_item_id}");

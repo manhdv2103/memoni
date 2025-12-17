@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     ffi::CString,
     fs,
     path::{Path, PathBuf},
@@ -20,6 +20,7 @@ use xdg_mime::SharedMimeInfo;
 use crate::{
     config::{Config, Dimensions, LayoutConfig},
     freedesktop_cache::get_cached_thumbnail,
+    ordered_hash_map::OrderedHashMap,
     selection::SelectionItem,
     utils::{is_image_mime, is_plaintext_mime, percent_decode, utf16le_to_string},
     widgets::clipboard_button::ClipboardButton,
@@ -72,9 +73,8 @@ pub struct Ui<'a> {
     pub egui_ctx: egui::Context,
     config: &'a Config,
     fonts: FontDefinitions,
-    item_ids: Vec<egui::Id>,
-    hovered_idx: Option<usize>,
-    active_idx: usize,
+    item_widget_ids: HashMap<u64, egui::Id>,
+    is_active_by_hovered: bool,
     scroll_area_output: Option<ScrollAreaOutput<()>>,
     is_initial_run: bool,
     shows_scroll_bar: bool,
@@ -150,9 +150,8 @@ impl<'a> Ui<'a> {
             egui_ctx,
             config,
             fonts,
-            item_ids: vec![],
-            hovered_idx: None,
-            active_idx: 0,
+            item_widget_ids: HashMap::new(),
+            is_active_by_hovered: false,
             scroll_area_output: None,
             is_initial_run: true,
             shows_scroll_bar: false,
@@ -235,7 +234,8 @@ impl<'a> Ui<'a> {
     pub fn run(
         &mut self,
         mut egui_input: RawInput,
-        selection_items: &VecDeque<SelectionItem>,
+        active_id: &mut u64,
+        selection_items: &OrderedHashMap<u64, SelectionItem>,
         flow: UiFlow,
         mut on_paste: impl FnMut(&SelectionItem),
     ) -> Result<FullOutput> {
@@ -243,7 +243,7 @@ impl<'a> Ui<'a> {
         let mut run_error = None;
         let layout = &self.config.layout;
 
-        let prev_active_idx = self.active_idx;
+        let prev_active_id = *active_id;
         let mut move_by_key = false;
         let mut pointer_moved = false;
         egui_input.events.retain(|ev| {
@@ -271,36 +271,44 @@ impl<'a> Ui<'a> {
                         egui::Key::B if modifiers.ctrl => -10,
                         _ => 0,
                     } * if flow == UiFlow::BottomToTop { -1 } else { 1 };
-                    if focus_step != 0 && !self.item_ids.is_empty() {
+                    if focus_step != 0
+                        && let Some(active_idx) = selection_items
+                            .iter()
+                            .position(|(id, _)| *id == *active_id)
+                    {
                         // Reduce step size to 1 to help reorient user when wrapping while
                         // doing half-page/full-page scroll
-                        let focus_step = if (self.active_idx == 0 && focus_step < 0)
-                            || (self.active_idx == self.item_ids.len() - 1 && focus_step > 0)
+                        let focus_step = if (active_idx == 0 && focus_step < 0)
+                            || (active_idx == selection_items.len() - 1 && focus_step > 0)
                         {
                             if focus_step > 0 { 1 } else { -1 }
                         } else {
                             focus_step
                         };
 
-                        let new_active_idx = self.active_idx as isize + focus_step;
+                        let mut new_active_idx = active_idx as isize + focus_step;
 
                         // Snap to start/end of the list if overshooting while
                         // doing half-page/full-page scroll
-                        self.active_idx = if (self.active_idx == 0
-                            && new_active_idx < self.active_idx as isize)
-                            || (self.active_idx == self.item_ids.len() - 1
-                                && new_active_idx > self.active_idx as isize)
+                        new_active_idx = if (active_idx == 0
+                            && new_active_idx < active_idx as isize)
+                            || (active_idx == selection_items.len() - 1
+                                && new_active_idx > active_idx as isize)
                         {
-                            new_active_idx.rem_euclid(self.item_ids.len() as isize) as usize
+                            new_active_idx.rem_euclid(selection_items.len() as isize)
                         } else {
-                            new_active_idx.clamp(0, self.item_ids.len() as isize - 1) as usize
+                            new_active_idx.clamp(0, selection_items.len() as isize - 1)
                         };
 
+                        *active_id = *selection_items
+                            .get_by_index(new_active_idx as usize)
+                            .unwrap()
+                            .0;
                         move_by_key = true;
                     }
 
                     if matches!(key, egui::Key::Enter | egui::Key::Space)
-                        && let Some(item) = selection_items.get(self.active_idx)
+                        && let Some(item) = selection_items.get(active_id)
                     {
                         on_paste(item);
                     }
@@ -324,16 +332,16 @@ impl<'a> Ui<'a> {
         });
 
         let full_output = self.egui_ctx.run(egui_input, |ctx| {
-            if let Some(current_hovered_idx) = ctx.viewport(|vp| {
-                self.item_ids
+            if let Some((current_hovered_id, _)) = ctx.viewport(|vp| {
+                self.item_widget_ids
                     .iter()
-                    .position(|id| vp.interact_widgets.hovered.contains(id))
+                    .find(|(_, widget_id)| vp.interact_widgets.hovered.contains(widget_id))
             }) {
                 if move_by_key {
-                    self.hovered_idx = None;
-                } else if !self.is_initial_run && (self.hovered_idx.is_some() || pointer_moved) {
-                    self.hovered_idx = Some(current_hovered_idx);
-                    self.active_idx = current_hovered_idx;
+                    self.is_active_by_hovered = false;
+                } else if !self.is_initial_run && (self.is_active_by_hovered || pointer_moved) {
+                    self.is_active_by_hovered = true;
+                    *active_id = *current_hovered_id;
                 }
             }
 
@@ -346,12 +354,12 @@ impl<'a> Ui<'a> {
             let set_default_scroll_offset = self.is_initial_run
                 // offset items to the bottom
                 || (flow == UiFlow::BottomToTop && !content_overflowed);
-            let set_active_scroll_offset = prev_active_idx != self.active_idx;
+            let set_active_scroll_offset = prev_active_id != *active_id;
             let next_scroll_offset = if (set_default_scroll_offset || set_active_scroll_offset)
                 && let Some(scroll_area) = &self.scroll_area_output
-                && let Some(&active_id) = self.item_ids.get(self.active_idx)
+                && let Some(&active_widget_id) = self.item_widget_ids.get(active_id)
                 && let Some(active_rect) =
-                    ctx.viewport(|vp| vp.prev_pass.widgets.get(active_id).map(|w| w.rect))
+                    ctx.viewport(|vp| vp.prev_pass.widgets.get(active_widget_id).map(|w| w.rect))
             {
                 let scroll_rect = scroll_area.inner_rect;
                 let scroll_content_size = scroll_area.content_size[1];
@@ -377,7 +385,7 @@ impl<'a> Ui<'a> {
                 None
             };
 
-            self.item_ids.clear();
+            self.item_widget_ids.clear();
 
             let container_result = Self::container(ctx, self.config, next_scroll_offset,
                 self.shows_scroll_bar, |ui| {
@@ -391,13 +399,13 @@ impl<'a> Ui<'a> {
 
                     let layout_reversed = flow == UiFlow::BottomToTop;
                     let item_it: Box<dyn Iterator<Item = _>> = if layout_reversed {
-                        Box::new(selection_items.iter().enumerate().rev())
+                        Box::new(selection_items.iter().rev())
                     } else {
-                        Box::new(selection_items.iter().enumerate())
+                        Box::new(selection_items.iter())
                     };
 
-                    for (i, item) in item_it {
-                        let is_active = i == self.active_idx;
+                    for  (&id, item) in item_it {
+                        let is_active = id == *active_id;
 
                         let btn = ui.add(
                             self.button_widgets
@@ -406,12 +414,7 @@ impl<'a> Ui<'a> {
                                 .clone()
                                 .is_active(is_active)
                         );
-
-                        if layout_reversed {
-                            self.item_ids.insert(0, btn.id);
-                        } else {
-                            self.item_ids.push(btn.id);
-                        }
+                        self.item_widget_ids.insert(id, btn.id);
 
                         if btn.clicked() {
                             on_paste(item);
@@ -538,8 +541,7 @@ impl<'a> Ui<'a> {
 
     pub fn reset(&mut self) {
         info!("resetting ui states");
-        self.active_idx = 0;
-        self.hovered_idx = None;
+        self.is_active_by_hovered = false;
         self.is_initial_run = true;
         self.shows_scroll_bar = false;
     }

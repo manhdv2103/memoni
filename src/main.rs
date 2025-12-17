@@ -217,7 +217,7 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
         args.selection == SelectionType::PRIMARY,
     )?;
     let mut ui = Ui::new(&config)?;
-    for item in &selection.items {
+    for (_, item) in &selection.items {
         ui.build_button_widget(item)?;
     }
 
@@ -242,6 +242,11 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
     let main_loop_result = (|| -> Result<()> {
         let mut window_shown = false;
         let mut pointer_button_press_count = 0;
+        let mut active_id = selection
+            .items
+            .get_by_index(0)
+            .map(|(id, _)| *id)
+            .unwrap_or(0);
 
         info!("starting main event loop");
         'main_loop: loop {
@@ -322,7 +327,7 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
 
                     input = Input::new(&window, &key_converter)?;
                     ui.reset_context();
-                    for item in &selection.items {
+                    for (_, item) in &selection.items {
                         ui.build_button_widget(item)?;
                     }
 
@@ -378,6 +383,11 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
                 window.update_window_pos()?;
                 input.update_pointer_pos()?;
                 ui.reset();
+                active_id = selection
+                    .items
+                    .get_by_index(0)
+                    .map(|(id, _)| *id)
+                    .unwrap_or(0);
             }
 
             if window_shown || will_show_window {
@@ -388,6 +398,7 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
                 };
                 let full_output = ui.run(
                     input.egui_input.take(),
+                    &mut active_id,
                     &selection.items,
                     ui_flow,
                     |selected| {
