@@ -190,5 +190,5 @@ preview_background = "#00000000"
 
 [PRIMARY]
 
-# Keeps higher items when using PRIMARY
+# Keeps more items when using PRIMARY
 item_limit = 120
