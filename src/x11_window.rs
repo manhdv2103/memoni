@@ -47,7 +47,8 @@ pub struct X11Window<'a> {
     pub win_opened_pointer_pos: Cell<(i16, i16)>,
     pub always_follows_pointer: bool,
     config: &'a Config,
-    win_event_mask: EventMask,
+    shown_win_event_mask: EventMask,
+    hidden_win_event_mask: EventMask,
     win_pos: Cell<(i16, i16)>,
     win_placed_above_pointer: Cell<bool>,
 }
@@ -65,11 +66,12 @@ impl<'a> X11Window<'a> {
         let atoms = Atoms::new(&conn)?.reply()?;
 
         let win_id = conn.generate_id()?;
-        let win_event_mask = EventMask::EXPOSURE
+        let shown_win_event_mask = EventMask::EXPOSURE
             | EventMask::STRUCTURE_NOTIFY
             | EventMask::BUTTON_PRESS
             | EventMask::BUTTON_RELEASE
             | EventMask::POINTER_MOTION;
+        let hidden_win_event_mask = EventMask::STRUCTURE_NOTIFY;
 
         let x11_window = X11Window {
             conn,
@@ -80,7 +82,8 @@ impl<'a> X11Window<'a> {
             selection_type,
             dimensions: config.layout.window_dimensions,
             config,
-            win_event_mask,
+            shown_win_event_mask,
+            hidden_win_event_mask,
             always_follows_pointer,
             win_pos: Cell::new((0, 0)),
             win_opened_pointer_pos: Cell::new((0, 0)),
@@ -108,7 +111,7 @@ impl<'a> X11Window<'a> {
             conn,
             screen,
             win_id,
-            win_event_mask,
+            hidden_win_event_mask,
             config,
             selection_type,
             atoms,
@@ -117,7 +120,7 @@ impl<'a> X11Window<'a> {
         let win_id = win_id.get();
 
         let win_aux = CreateWindowAux::new()
-            .event_mask(*win_event_mask)
+            .event_mask(*hidden_win_event_mask)
             .background_pixel(*config.theme.background)
             .win_gravity(Gravity::NORTH_WEST)
             .override_redirect(1);
@@ -287,21 +290,20 @@ impl<'a> X11Window<'a> {
     }
 
     pub fn enable_events(&self) -> Result<()> {
-        debug!("set event mask to {:?}", self.win_event_mask);
+        debug!("set event mask to {:?}", self.shown_win_event_mask);
         self.conn.change_window_attributes(
             self.win_id.get(),
-            &ChangeWindowAttributesAux::new().event_mask(self.win_event_mask),
+            &ChangeWindowAttributesAux::new().event_mask(self.shown_win_event_mask),
         )?;
 
         Ok(())
     }
 
     pub fn disable_events(&self) -> Result<()> {
-        let minimal_event_mask = EventMask::STRUCTURE_NOTIFY;
-        debug!("set event mask to {:?}", minimal_event_mask);
+        debug!("set event mask to {:?}", self.hidden_win_event_mask);
         self.conn.change_window_attributes(
             self.win_id.get(),
-            &ChangeWindowAttributesAux::new().event_mask(minimal_event_mask),
+            &ChangeWindowAttributesAux::new().event_mask(self.hidden_win_event_mask),
         )?;
 
         Ok(())
