@@ -35,6 +35,7 @@ struct ConfigSet {
 pub struct Config {
     pub item_limit: usize,
     pub show_ribbon: bool,
+    pub scroll_bar_auto_hide: bool,
 
     #[serde_as(as = "HashMap<_, OneOrMany<_>>")]
     pub app_paste_keymaps: HashMap<String, Vec<KeyStroke>>,
@@ -52,6 +53,7 @@ impl Default for Config {
         Self {
             item_limit: 100,
             show_ribbon: false,
+            scroll_bar_auto_hide: false,
             app_paste_keymaps: Default::default(),
             layout: Default::default(),
             font: Default::default(),

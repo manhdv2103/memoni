@@ -94,7 +94,7 @@ pub struct Ui<'a> {
     is_active_by_hovered: bool,
     scroll_area_info: Option<ScrollAreaInfo>,
     is_initial_run: bool,
-    shows_scroll_bar: bool,
+    hides_scroll_bar: bool,
     button_widgets: HashMap<u64, ClipboardButton>,
     fallback: Fallback,
 }
@@ -171,7 +171,7 @@ impl<'a> Ui<'a> {
             is_active_by_hovered: false,
             scroll_area_info: None,
             is_initial_run: true,
-            shows_scroll_bar: false,
+            hides_scroll_bar: config.scroll_bar_auto_hide,
             button_widgets: HashMap::new(),
             fallback: Fallback {
                 image: fallback_img,
@@ -348,13 +348,18 @@ impl<'a> Ui<'a> {
 
             if let egui::Event::PointerMoved(pointer_pos) = ev {
                 pointer_moved = true;
-                if self
-                    .scroll_area_info
-                    .as_ref()
-                    .map(|s| s.rect.contains(*pointer_pos))
-                    .unwrap_or(false)
+
+                // With scroll_bar_auto_hide = true, on window shown, the scroll bar may still be
+                // briefly visible, so we hide it before showing the window. This shows the scroll
+                // bar back when the pointer starts to move.
+                if self.config.scroll_bar_auto_hide
+                    && self
+                        .scroll_area_info
+                        .as_ref()
+                        .map(|s| s.rect.contains(*pointer_pos))
+                        .unwrap_or(false)
                 {
-                    self.shows_scroll_bar = true;
+                    self.hides_scroll_bar = false;
                 }
             }
 
@@ -485,7 +490,7 @@ impl<'a> Ui<'a> {
                 ctx,
                 self.config,
                 next_scroll_offset,
-                self.shows_scroll_bar,
+                self.hides_scroll_bar,
                 |ui| {
                     if selection_items.is_empty() {
                         ui.centered_and_justified(|ui| {
@@ -550,7 +555,7 @@ impl<'a> Ui<'a> {
         ctx: &egui::Context,
         config: &Config,
         scroll_offset: Option<f32>,
-        shows_scroll_bar: bool,
+        hides_scroll_bar: bool,
         add_contents: impl FnOnce(&mut egui::Ui) -> Result<()>,
     ) -> Result<ScrollAreaOutput<()>> {
         let LayoutConfig {
@@ -582,17 +587,17 @@ impl<'a> Ui<'a> {
                 let original_style = (*ui.ctx().style()).clone();
                 let mut scrollbar_style = original_style.clone();
                 scrollbar_style.visuals.extreme_bg_color = theme.scroll_background.into();
-                for widget in [
-                    &mut scrollbar_style.visuals.widgets.inactive,
-                    &mut scrollbar_style.visuals.widgets.hovered,
-                    &mut scrollbar_style.visuals.widgets.active,
-                ] {
-                    // Cannot use scroll_bar_visibility as the scroll bar has fading animation when hiding
-                    widget.fg_stroke.color = if shows_scroll_bar {
-                        theme.scroll_handle.into()
-                    } else {
-                        Color32::TRANSPARENT
-                    };
+
+                if hides_scroll_bar {
+                    scrollbar_style.spacing.scroll.dormant_background_opacity = 0.0;
+                    scrollbar_style.spacing.scroll.dormant_handle_opacity = 0.0;
+                    scrollbar_style.spacing.scroll.active_background_opacity = 0.0;
+                    scrollbar_style.spacing.scroll.active_handle_opacity = 0.0;
+                } else if !config.scroll_bar_auto_hide {
+                    scrollbar_style.spacing.scroll.dormant_background_opacity =
+                        scrollbar_style.spacing.scroll.active_background_opacity;
+                    scrollbar_style.spacing.scroll.dormant_handle_opacity =
+                        scrollbar_style.spacing.scroll.active_handle_opacity;
                 }
 
                 ui.set_style(scrollbar_style);
@@ -643,7 +648,7 @@ impl<'a> Ui<'a> {
         info!("resetting ui states");
         self.is_active_by_hovered = false;
         self.is_initial_run = true;
-        self.shows_scroll_bar = false;
+        self.hides_scroll_bar = self.config.scroll_bar_auto_hide;
     }
 
     pub fn build_button_widget(&mut self, item: &SelectionItem) -> Result<()> {
