@@ -86,12 +86,18 @@ struct ScrollAreaInfo {
     offset: f32,
 }
 
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+enum ActiveSource {
+    Key,
+    Hovering,
+}
+
 pub struct Ui<'a> {
     pub egui_ctx: egui::Context,
     config: &'a Config,
     fonts: FontDefinitions,
     item_widget_ids: HashMap<u64, egui::Id>,
-    is_active_by_hovered: bool,
+    active_source: Option<ActiveSource>,
     scroll_area_info: Option<ScrollAreaInfo>,
     is_initial_run: bool,
     hides_scroll_bar: bool,
@@ -168,7 +174,7 @@ impl<'a> Ui<'a> {
             config,
             fonts,
             item_widget_ids: HashMap::new(),
-            is_active_by_hovered: false,
+            active_source: None,
             scroll_area_info: None,
             is_initial_run: true,
             hides_scroll_bar: config.scroll_bar_auto_hide,
@@ -269,7 +275,6 @@ impl<'a> Ui<'a> {
             .as_ref()
             .and_then(|info| info.content_rects.get(&prev_active_id).cloned());
 
-        let mut pointer_moved = false;
         egui_input.events.retain(|ev| {
             // We will handle key events ourself
             if let egui::Event::Key {
@@ -327,7 +332,7 @@ impl<'a> Ui<'a> {
                             .get_by_index(new_active_idx as usize)
                             .unwrap()
                             .0;
-                        self.is_active_by_hovered = false;
+                        self.active_source = Some(ActiveSource::Key);
                     }
 
                     if matches!(key, egui::Key::Enter | egui::Key::Space)
@@ -346,21 +351,24 @@ impl<'a> Ui<'a> {
                 return false;
             }
 
-            if let egui::Event::PointerMoved(pointer_pos) = ev {
-                pointer_moved = true;
+            if matches!(ev, egui::Event::PointerMoved(_))
+                || matches!(ev, egui::Event::MouseWheel { .. })
+            {
+                self.active_source = Some(ActiveSource::Hovering);
+            }
 
-                // With scroll_bar_auto_hide = true, on window shown, the scroll bar may still be
-                // briefly visible, so we hide it before showing the window. This shows the scroll
-                // bar back when the pointer starts to move.
-                if self.config.scroll_bar_auto_hide
-                    && self
-                        .scroll_area_info
-                        .as_ref()
-                        .map(|s| s.rect.contains(*pointer_pos))
-                        .unwrap_or(false)
-                {
-                    self.hides_scroll_bar = false;
-                }
+            // With scroll_bar_auto_hide = true, on window shown, the scroll bar may still be
+            // briefly visible, so we hide it before showing the window. This shows the scroll
+            // bar back when the pointer starts to move.
+            if let egui::Event::PointerMoved(pointer_pos) = ev
+                && self.config.scroll_bar_auto_hide
+                && self
+                    .scroll_area_info
+                    .as_ref()
+                    .map(|s| s.rect.contains(*pointer_pos))
+                    .unwrap_or(false)
+            {
+                self.hides_scroll_bar = false;
             }
 
             true
@@ -378,24 +386,12 @@ impl<'a> Ui<'a> {
         }
 
         let full_output = self.egui_ctx.run(egui_input, |ctx| {
-            let mut active_changed_by_hovering = false;
             if !ctx.will_discard()
-                && (self.is_active_by_hovered || pointer_moved)
-                && !self.is_initial_run
+                && active_item_removed
+                && self
+                    .active_source
+                    .is_none_or(|source| source == ActiveSource::Key)
             {
-                let hovered_item = ctx.viewport(|vp| {
-                    self.item_widget_ids
-                        .iter()
-                        .find(|(_, widget_id)| vp.interact_widgets.hovered.contains(widget_id))
-                });
-                if let Some((&hovered_item_id, _)) = hovered_item {
-                    self.is_active_by_hovered = true;
-                    *active_id = hovered_item_id;
-                    active_changed_by_hovering = true;
-                }
-            }
-
-            if !ctx.will_discard() && active_item_removed && !active_changed_by_hovering {
                 let nearest_item_id = if let Some(scroll_info) = &self.scroll_area_info
                     && let Some(removed_rect) = prev_active_rect
                 {
@@ -415,6 +411,22 @@ impl<'a> Ui<'a> {
                 *active_id = nearest_item_id
                     .or_else(|| selection_items.get_by_index(0).map(|(id, _)| *id))
                     .unwrap_or(0);
+            }
+
+            if !ctx.will_discard()
+                && !self.is_initial_run
+                && self
+                    .active_source
+                    .is_none_or(|source| source == ActiveSource::Hovering)
+            {
+                let hovered_item = ctx.viewport(|vp| {
+                    self.item_widget_ids
+                        .iter()
+                        .find(|(_, widget_id)| vp.interact_widgets.hovered.contains(widget_id))
+                });
+                if let Some((&hovered_item_id, _)) = hovered_item {
+                    *active_id = hovered_item_id;
+                }
             }
 
             let scroll_content_size = self
@@ -646,7 +658,7 @@ impl<'a> Ui<'a> {
 
     pub fn reset(&mut self) {
         info!("resetting ui states");
-        self.is_active_by_hovered = false;
+        self.active_source = None;
         self.is_initial_run = true;
         self.hides_scroll_bar = self.config.scroll_bar_auto_hide;
     }
