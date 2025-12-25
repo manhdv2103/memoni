@@ -288,7 +288,6 @@ impl<'a> Ui<'a> {
                         -scroll_info.rect.height() / 2.0,
                         selection_items,
                         &scroll_info.content_rects,
-                        layout.button_spacing,
                     ),
                     ScrollAction::HalfDown if active_idx == items_size - 1 => id_from_idx(0),
                     ScrollAction::HalfDown => find_item_at_distance_from(
@@ -296,7 +295,6 @@ impl<'a> Ui<'a> {
                         scroll_info.rect.height() / 2.0,
                         selection_items,
                         &scroll_info.content_rects,
-                        layout.button_spacing,
                     ),
 
                     ScrollAction::PageUp if active_idx == 0 => id_from_idx(items_size - 1),
@@ -305,7 +303,6 @@ impl<'a> Ui<'a> {
                         -scroll_info.rect.height(),
                         selection_items,
                         &scroll_info.content_rects,
-                        layout.button_spacing,
                     ),
                     ScrollAction::PageDown if active_idx == items_size - 1 => id_from_idx(0),
                     ScrollAction::PageDown => find_item_at_distance_from(
@@ -313,7 +310,6 @@ impl<'a> Ui<'a> {
                         scroll_info.rect.height(),
                         selection_items,
                         &scroll_info.content_rects,
-                        layout.button_spacing,
                     ),
                 };
 
@@ -858,7 +854,6 @@ fn find_item_at_distance_from(
     distance: f32,
     items: &OrderedHashMap<u64, SelectionItem>,
     item_rects: &HashMap<u64, Rect>,
-    item_gap: f32,
 ) -> u64 {
     let items_size = items.len();
     assert!(items_size > 0);
@@ -885,10 +880,28 @@ fn find_item_at_distance_from(
 
     let mut to_idx = start;
     let mut total_dist = 0.0;
+    let mut current_pos = item_rects
+        .get(items.get_by_index(from_idx).unwrap().0)
+        .map(|r| r.center().y)
+        .unwrap_or(0.0);
     loop {
         if let Some(rect) = item_rects.get(items.get_by_index(to_idx).unwrap().0) {
-            total_dist += rect.height() + item_gap;
+            let prev_pos = current_pos;
+            current_pos = rect.center().y;
+
+            let prev_total_dist = total_dist;
+            total_dist += (current_pos - prev_pos).abs();
+
             if total_dist >= target_dist {
+                // Use the previous item if it's nearer to target_dist than the current one
+                if prev_total_dist > 0.0 && target_dist - prev_total_dist < total_dist - target_dist
+                {
+                    to_idx = if dir == Dir::Down {
+                        to_idx - 1
+                    } else {
+                        to_idx + 1
+                    };
+                }
                 break;
             }
         }
