@@ -1143,9 +1143,13 @@ pub fn load_svg(svg_bytes: &[u8], size_hint: Vec2) -> Result<(RgbaImage, (u32, u
 
 fn normalize_display_string(s: &str) -> String {
     let mut res = String::with_capacity(s.len());
-    for (i, c) in s.chars().enumerate() {
-        // Very very long string causes egui to choke on first render, even when we only display it on a single line
-        if i == 10_000 && i < s.len() - 1 {
+    let mut chars = s.chars().enumerate().peekable();
+
+    let mut char_with_idx = chars.next();
+    while let Some((i, c)) = char_with_idx {
+        // Very very long string causes egui to choke on first render, even when we only display it
+        // on a single line
+        if i == 10_000 && chars.peek().is_some() {
             res.push('…');
             break;
         }
@@ -1155,6 +1159,8 @@ fn normalize_display_string(s: &str) -> String {
             '\n' => res.push('⏎'),
             _ => res.push(c),
         }
+
+        char_with_idx = chars.next();
     }
 
     res
