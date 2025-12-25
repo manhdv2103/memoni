@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::{HashMap, VecDeque};
 use std::hash::Hash;
 
@@ -120,6 +121,14 @@ where
             idx: 0,
             back_idx: 0,
         }
+    }
+
+    pub fn binary_search_by<'a, F>(&'a self, mut f: F) -> Result<usize, usize>
+    where
+        F: FnMut((&'a K, &'a V)) -> Ordering,
+    {
+        self.keys
+            .binary_search_by(|k| f((k, self.map.get(k).unwrap())))
     }
 }
 

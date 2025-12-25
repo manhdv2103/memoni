@@ -386,6 +386,7 @@ impl<'a> Ui<'a> {
         }
 
         let full_output = self.egui_ctx.run(egui_input, |ctx| {
+            // Pick new active item if the current one got removed
             if !ctx.will_discard()
                 && active_item_removed
                 && self
@@ -413,6 +414,7 @@ impl<'a> Ui<'a> {
                     .unwrap_or(0);
             }
 
+            // Update active item using hovered item
             if !ctx.will_discard()
                 && !self.is_initial_run
                 && self
@@ -426,6 +428,52 @@ impl<'a> Ui<'a> {
                 });
                 if let Some((&hovered_item_id, _)) = hovered_item {
                     *active_id = hovered_item_id;
+                }
+            }
+
+            // Active item is scrolled out of view, pick a new one
+            if !ctx.will_discard()
+                && !self.is_initial_run
+                && prev_active_id == *active_id
+                && let Some(scroll_info) = &self.scroll_area_info
+                && let Some(active_rect) = scroll_info.content_rects.get(active_id)
+                && !scroll_info.rect.contains_rect(*active_rect)
+            {
+                let active_rect_above_view = active_rect.min.y < scroll_info.rect.min.y;
+                #[allow(clippy::collapsible_else_if)]
+                let near_idx_offset = if flow == UiFlow::TopToBottom {
+                    if active_rect_above_view { 0 } else { 1 }
+                } else {
+                    if active_rect_above_view { 1 } else { 0 }
+                };
+
+                let found_idx = selection_items.binary_search_by(|(k, _)| {
+                    let rect = scroll_info.content_rects.get(k).unwrap_or(&Rect::ZERO);
+                    let order = if active_rect_above_view {
+                        rect.min.y.total_cmp(&scroll_info.rect.min.y)
+                    } else {
+                        rect.max.y.total_cmp(&scroll_info.rect.max.y)
+                    };
+
+                    if flow == UiFlow::TopToBottom {
+                        order
+                    } else {
+                        order.reverse()
+                    }
+                });
+                let found_idx = match found_idx {
+                    Ok(exact_idx) => Some(exact_idx),
+                    Err(near_idx)
+                        if near_idx >= near_idx_offset
+                            && near_idx - near_idx_offset < selection_items.len() =>
+                    {
+                        Some(near_idx - near_idx_offset)
+                    }
+                    Err(_) => None,
+                };
+
+                if let Some(found_idx) = found_idx {
+                    *active_id = *selection_items.get_by_index(found_idx).unwrap().0;
                 }
             }
 
