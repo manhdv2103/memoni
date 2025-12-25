@@ -198,7 +198,7 @@ impl<'a> Ui<'a> {
         egui_ctx.style_mut(|style| {
             // style.debug.debug_on_hover = true;
             style.spacing.button_padding = layout.button_padding.into();
-            style.spacing.item_spacing = layout.button_spacing.into();
+            style.spacing.item_spacing = egui::vec2(0.0, layout.button_spacing);
             style.interaction.selectable_labels = false;
 
             style.visuals.override_text_color = Some(theme.foreground.into());
@@ -288,7 +288,7 @@ impl<'a> Ui<'a> {
                         -scroll_info.rect.height() / 2.0,
                         selection_items,
                         &scroll_info.content_rects,
-                        layout.button_spacing.y,
+                        layout.button_spacing,
                     ),
                     ScrollAction::HalfDown if active_idx == items_size - 1 => id_from_idx(0),
                     ScrollAction::HalfDown => find_item_at_distance_from(
@@ -296,7 +296,7 @@ impl<'a> Ui<'a> {
                         scroll_info.rect.height() / 2.0,
                         selection_items,
                         &scroll_info.content_rects,
-                        layout.button_spacing.y,
+                        layout.button_spacing,
                     ),
 
                     ScrollAction::PageUp if active_idx == 0 => id_from_idx(items_size - 1),
@@ -305,7 +305,7 @@ impl<'a> Ui<'a> {
                         -scroll_info.rect.height(),
                         selection_items,
                         &scroll_info.content_rects,
-                        layout.button_spacing.y,
+                        layout.button_spacing,
                     ),
                     ScrollAction::PageDown if active_idx == items_size - 1 => id_from_idx(0),
                     ScrollAction::PageDown => find_item_at_distance_from(
@@ -313,7 +313,7 @@ impl<'a> Ui<'a> {
                         scroll_info.rect.height(),
                         selection_items,
                         &scroll_info.content_rects,
-                        layout.button_spacing.y,
+                        layout.button_spacing,
                     ),
                 };
 
@@ -459,9 +459,9 @@ impl<'a> Ui<'a> {
                             .get(item_id)
                             .map(|r| r.height())
                             .unwrap_or(0.0);
-                        size += self.config.layout.button_spacing.y;
+                        size += self.config.layout.button_spacing;
                     }
-                    size -= self.config.layout.button_spacing.y;
+                    size -= self.config.layout.button_spacing;
                     size += (self.config.layout.window_padding.y as f32) * 2.0;
                     size
                 })

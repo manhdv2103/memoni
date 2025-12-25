@@ -63,8 +63,8 @@ button_corner_radius = 3
 
 # Spacing (px) between buttons
 #
-# default: { x = 5, y = 5 }
-button_spacing = { x = 4, y = 4 }
+# default: 5
+button_spacing = 4
 
 # Scroll bar margin (px) from window top and bottom edges
 #
