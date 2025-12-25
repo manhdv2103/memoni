@@ -9,9 +9,8 @@ use std::{
 
 use anyhow::{Result, anyhow};
 use egui::{
-    Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontTweak, FullOutput, Modifiers,
-    Painter, RawInput, Rect, RichText, Stroke, TextureHandle, Vec2, epaint,
-    scroll_area::ScrollAreaOutput,
+    Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontTweak, FullOutput, Painter,
+    RawInput, Rect, RichText, Stroke, TextureHandle, Vec2, epaint, scroll_area::ScrollAreaOutput,
 };
 use fontconfig::Fontconfig;
 use image::{GenericImageView, RgbaImage};
@@ -26,15 +25,6 @@ use crate::{
     utils::{is_image_mime, is_plaintext_mime, percent_decode, utf16le_to_string},
     widgets::clipboard_button::ClipboardButton,
 };
-
-trait ModifiersExtra {
-    fn ctrl_only(&self) -> bool;
-}
-impl ModifiersExtra for Modifiers {
-    fn ctrl_only(&self) -> bool {
-        self.ctrl && !(self.alt || self.shift)
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UiFlow {
@@ -256,12 +246,12 @@ impl<'a> Ui<'a> {
 
     pub fn run(
         &mut self,
-        mut egui_input: RawInput,
+        egui_input: RawInput,
         active_id: &mut u64,
         selection_items: &OrderedHashMap<u64, SelectionItem>,
         flow: UiFlow,
+        scroll_steps: Vec<isize>,
         mut on_paste: impl FnMut(&SelectionItem),
-        mut on_remove: impl FnMut(&SelectionItem),
     ) -> Result<FullOutput> {
         trace!("painting ui with flow {flow:?}");
         let mut run_error = None;
@@ -275,82 +265,44 @@ impl<'a> Ui<'a> {
             .as_ref()
             .and_then(|info| info.content_rects.get(&prev_active_id).cloned());
 
-        egui_input.events.retain(|ev| {
-            // We will handle key events ourself
-            if let egui::Event::Key {
-                key,
-                pressed,
-                modifiers,
-                ..
-            } = ev
+        for step in scroll_steps {
+            let focus_step = step * if flow == UiFlow::BottomToTop { -1 } else { 1 };
+            if focus_step != 0
+                && let Some(active_idx) =
+                    selection_items.iter().position(|(id, _)| *id == *active_id)
             {
-                if *pressed {
-                    let focus_step = match key {
-                        egui::Key::ArrowUp | egui::Key::K => -1,
-                        egui::Key::P if modifiers.ctrl_only() => -1,
-                        egui::Key::Tab if modifiers.shift_only() => -1,
-                        egui::Key::ArrowDown | egui::Key::J => 1,
-                        egui::Key::N if modifiers.ctrl_only() => 1,
-                        egui::Key::Tab => 1,
+                // Reduce step size to 1 to help reorient user when wrapping while
+                // doing half-page/full-page scroll
+                let focus_step = if (active_idx == 0 && focus_step < 0)
+                    || (active_idx == selection_items.len() - 1 && focus_step > 0)
+                {
+                    if focus_step > 0 { 1 } else { -1 }
+                } else {
+                    focus_step
+                };
 
-                        // TODO: proper half-page/full-page step (based on window and item sizes)
-                        egui::Key::D if modifiers.ctrl_only() => 5,
-                        egui::Key::U if modifiers.ctrl_only() => -5,
-                        egui::Key::F if modifiers.ctrl_only() => 10,
-                        egui::Key::B if modifiers.ctrl_only() => -10,
-                        _ => 0,
-                    } * if flow == UiFlow::BottomToTop { -1 } else { 1 };
-                    if focus_step != 0
-                        && let Some(active_idx) =
-                            selection_items.iter().position(|(id, _)| *id == *active_id)
-                    {
-                        // Reduce step size to 1 to help reorient user when wrapping while
-                        // doing half-page/full-page scroll
-                        let focus_step = if (active_idx == 0 && focus_step < 0)
-                            || (active_idx == selection_items.len() - 1 && focus_step > 0)
-                        {
-                            if focus_step > 0 { 1 } else { -1 }
-                        } else {
-                            focus_step
-                        };
+                let mut new_active_idx = active_idx as isize + focus_step;
 
-                        let mut new_active_idx = active_idx as isize + focus_step;
+                // Snap to start/end of the list if overshooting while
+                // doing half-page/full-page scroll
+                new_active_idx = if (active_idx == 0 && new_active_idx < active_idx as isize)
+                    || (active_idx == selection_items.len() - 1
+                        && new_active_idx > active_idx as isize)
+                {
+                    new_active_idx.rem_euclid(selection_items.len() as isize)
+                } else {
+                    new_active_idx.clamp(0, selection_items.len() as isize - 1)
+                };
 
-                        // Snap to start/end of the list if overshooting while
-                        // doing half-page/full-page scroll
-                        new_active_idx = if (active_idx == 0
-                            && new_active_idx < active_idx as isize)
-                            || (active_idx == selection_items.len() - 1
-                                && new_active_idx > active_idx as isize)
-                        {
-                            new_active_idx.rem_euclid(selection_items.len() as isize)
-                        } else {
-                            new_active_idx.clamp(0, selection_items.len() as isize - 1)
-                        };
-
-                        *active_id = *selection_items
-                            .get_by_index(new_active_idx as usize)
-                            .unwrap()
-                            .0;
-                        self.active_source = Some(ActiveSource::Key);
-                    }
-
-                    if matches!(key, egui::Key::Enter | egui::Key::Space)
-                        && let Some(item) = selection_items.get(active_id)
-                    {
-                        on_paste(item);
-                    }
-
-                    if matches!(key, egui::Key::D)
-                        && modifiers.shift_only()
-                        && let Some(item) = selection_items.get(active_id)
-                    {
-                        on_remove(item);
-                    }
-                }
-                return false;
+                *active_id = *selection_items
+                    .get_by_index(new_active_idx as usize)
+                    .unwrap()
+                    .0;
+                self.active_source = Some(ActiveSource::Key);
             }
+        }
 
+        for ev in &egui_input.events {
             if !self.is_initial_run
                 && (matches!(ev, egui::Event::PointerMoved(_))
                     || matches!(ev, egui::Event::MouseWheel { .. }))
@@ -371,9 +323,7 @@ impl<'a> Ui<'a> {
             {
                 self.hides_scroll_bar = false;
             }
-
-            true
-        });
+        }
 
         if flow == UiFlow::BottomToTop && self.is_initial_run {
             self.egui_ctx.request_discard(

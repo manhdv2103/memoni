@@ -3,6 +3,7 @@ use env_logger::TimestampPrecision;
 use log::{LevelFilter, debug, info, warn};
 use memoni::config::Config;
 use memoni::input::Input;
+use memoni::key_action::{Action, KeyAction};
 use memoni::persistence::Persistence;
 use memoni::selection::Selection;
 use memoni::ui::{Ui, UiFlow};
@@ -205,6 +206,7 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
     let mut gl_context = OpenGLContext::new(&window, &config)?;
     let key_converter = X11KeyConverter::new(&window.conn)?;
     let mut input = Input::new(&window, &key_converter)?;
+    let key_action = KeyAction::new()?;
     let persistence = Persistence::new(args.selection)?;
     let mut selection = Selection::new(
         persistence.load_selection_items()?,
@@ -253,7 +255,6 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
             let mut will_show_window = false;
             let mut will_hide_window = false;
             let mut paste_item_id = None;
-            let mut remove_item_id = None;
 
             // non-blocking when window is visible, blocking otherwise
             let poll_timeout = if window_shown {
@@ -369,15 +370,6 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
 
                     persistence.save_selection_items(&selection.items)?;
                 }
-
-                for input_event in &input.egui_input.events {
-                    if let egui::Event::Key { key, .. } = input_event
-                        && *key == egui::Key::Escape
-                    {
-                        info!("received Escape key, hiding window");
-                        will_hide_window = true;
-                    }
-                }
             }
 
             if will_show_window {
@@ -392,6 +384,28 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
             }
 
             if window_shown || will_show_window {
+                let actions = key_action.from_input(&mut input.egui_input);
+                let mut scroll_steps = vec![];
+                for action in actions {
+                    match action {
+                        Action::Paste => {
+                            info!("paste item {active_id} selected by key action, hiding window");
+                            will_hide_window = true;
+                            paste_item_id = Some(active_id);
+                        }
+                        Action::Scroll(step) => scroll_steps.push(step),
+                        Action::Remove => {
+                            info!("deleting selection item {active_id}");
+                            selection.items.remove(&active_id);
+                            persistence.save_selection_items(&selection.items)?;
+                        }
+                        Action::HideWindow => {
+                            info!("received HideWindow key action, hiding window");
+                            will_hide_window = true;
+                        }
+                    }
+                }
+
                 let ui_flow = if window.is_win_placed_above_pointer() {
                     UiFlow::BottomToTop
                 } else {
@@ -402,13 +416,14 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
                     &mut active_id,
                     &selection.items,
                     ui_flow,
+                    scroll_steps,
                     |selected| {
-                        info!("paste item selected, hiding window");
+                        info!(
+                            "paste item {} selected by pointer, hiding window",
+                            selected.id
+                        );
                         will_hide_window = true;
                         paste_item_id = Some(selected.id);
-                    },
-                    |selected| {
-                        remove_item_id = Some(selected.id);
                     },
                 )?;
                 gl_context.render(&ui.egui_ctx, full_output)?;
@@ -434,10 +449,6 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
 
             if let Some(id) = paste_item_id {
                 selection.paste(id, window.win_opened_pointer_pos.get())?;
-            }
-            if let Some(id) = remove_item_id {
-                selection.items.remove(&id);
-                persistence.save_selection_items(&selection.items)?;
             }
         }
         Ok(())

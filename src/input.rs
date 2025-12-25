@@ -1,7 +1,7 @@
 use crate::{utils::keysym_to_egui_key, x11_key_converter::X11KeyConverter, x11_window::X11Window};
 use anyhow::Result;
 use egui::{Event, MouseWheelUnit, PointerButton, Pos2, RawInput, Rect, Vec2};
-use log::{debug, trace};
+use log::trace;
 use x11rb::protocol::{Event as X11Event, xproto::ConnectionExt as _};
 use xkeysym::Keysym;
 
@@ -44,7 +44,7 @@ impl<'a> Input<'a> {
 
                 let (x, y) = self.window.get_current_win_pos();
                 let rel_pos = Pos2::new((ev.root_x - x) as f32, (ev.root_y - y) as f32);
-                debug!(
+                trace!(
                     "pointer button: {pointer_button:?}, pressed={pressed}, root=({}, {}), relative=({}, {})",
                     ev.root_x, ev.root_y, rel_pos.x, rel_pos.y
                 );
@@ -92,7 +92,7 @@ impl<'a> Input<'a> {
                         }
 
                         if modifiers_updated {
-                            debug!("modifiers updated: {modifiers:?}");
+                            trace!("modifiers updated: {modifiers:?}");
                         } else {
                             trace!("ignoring modifier: {keysym:?}");
                         }
@@ -100,7 +100,9 @@ impl<'a> Input<'a> {
                     }
 
                     if let Some(key) = keysym_to_egui_key(Keysym::new(keysym.into())) {
-                        debug!("key: {key:?}, pressed={pressed}, keysym={keysym:?}, keycode={keycode}");
+                        trace!(
+                            "key: {key:?}, pressed={pressed}, keysym={keysym:?}, keycode={keycode}"
+                        );
                         break 'blk Some(Event::Key {
                             key,
                             physical_key: None,
@@ -109,10 +111,10 @@ impl<'a> Input<'a> {
                             modifiers: *modifiers,
                         });
                     } else {
-                        debug!("unknown keysym: {keysym:?}");
+                        trace!("unknown keysym: {keysym:?}");
                     }
                 } else {
-                    debug!("unknown keycode: {keycode}");
+                    trace!("unknown keycode: {keycode}");
                 }
 
                 None

@@ -1,6 +1,7 @@
 pub mod config;
 pub mod freedesktop_cache;
 pub mod input;
+pub mod key_action;
 pub mod opengl_context;
 pub mod ordered_hash_map;
 pub mod persistence;
