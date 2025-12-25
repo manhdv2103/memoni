@@ -20,6 +20,7 @@ use xdg_mime::SharedMimeInfo;
 use crate::{
     config::{Config, Dimensions, LayoutConfig},
     freedesktop_cache::get_cached_thumbnail,
+    key_action::ScrollAction,
     ordered_hash_map::OrderedHashMap,
     selection::SelectionItem,
     utils::{is_image_mime, is_plaintext_mime, percent_decode, utf16le_to_string},
@@ -78,7 +79,7 @@ struct ScrollAreaInfo {
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 enum ActiveSource {
-    Key,
+    KeyAction,
     Hovering,
 }
 
@@ -250,7 +251,7 @@ impl<'a> Ui<'a> {
         active_id: &mut u64,
         selection_items: &OrderedHashMap<u64, SelectionItem>,
         flow: UiFlow,
-        scroll_steps: Vec<isize>,
+        scroll_actions: Vec<ScrollAction>,
         mut on_paste: impl FnMut(&SelectionItem),
     ) -> Result<FullOutput> {
         trace!("painting ui with flow {flow:?}");
@@ -265,40 +266,59 @@ impl<'a> Ui<'a> {
             .as_ref()
             .and_then(|info| info.content_rects.get(&prev_active_id).cloned());
 
-        for step in scroll_steps {
-            let focus_step = step * if flow == UiFlow::BottomToTop { -1 } else { 1 };
-            if focus_step != 0
-                && let Some(active_idx) =
-                    selection_items.iter().position(|(id, _)| *id == *active_id)
+        let items_size = selection_items.len();
+        for action in scroll_actions {
+            let action = if flow == UiFlow::TopToBottom {
+                action
+            } else {
+                action.flipped()
+            };
+
+            if let Some(active_idx) = selection_items.iter().position(|(id, _)| *id == *active_id)
+                && let Some(scroll_info) = &self.scroll_area_info
             {
-                // Reduce step size to 1 to help reorient user when wrapping while
-                // doing half-page/full-page scroll
-                let focus_step = if (active_idx == 0 && focus_step < 0)
-                    || (active_idx == selection_items.len() - 1 && focus_step > 0)
-                {
-                    if focus_step > 0 { 1 } else { -1 }
-                } else {
-                    focus_step
+                let id_from_idx = |idx| *selection_items.get_by_index(idx).unwrap().0;
+                let next_id = match action {
+                    ScrollAction::ItemUp => id_from_idx((active_idx + items_size - 1) % items_size),
+                    ScrollAction::ItemDown => id_from_idx((active_idx + 1) % items_size),
+
+                    ScrollAction::HalfUp if active_idx == 0 => id_from_idx(items_size - 1),
+                    ScrollAction::HalfUp => find_item_at_distance_from(
+                        active_idx,
+                        -scroll_info.rect.height() / 2.0,
+                        selection_items,
+                        &scroll_info.content_rects,
+                        layout.button_spacing.y,
+                    ),
+                    ScrollAction::HalfDown if active_idx == items_size - 1 => id_from_idx(0),
+                    ScrollAction::HalfDown => find_item_at_distance_from(
+                        active_idx,
+                        scroll_info.rect.height() / 2.0,
+                        selection_items,
+                        &scroll_info.content_rects,
+                        layout.button_spacing.y,
+                    ),
+
+                    ScrollAction::PageUp if active_idx == 0 => id_from_idx(items_size - 1),
+                    ScrollAction::PageUp => find_item_at_distance_from(
+                        active_idx,
+                        -scroll_info.rect.height(),
+                        selection_items,
+                        &scroll_info.content_rects,
+                        layout.button_spacing.y,
+                    ),
+                    ScrollAction::PageDown if active_idx == items_size - 1 => id_from_idx(0),
+                    ScrollAction::PageDown => find_item_at_distance_from(
+                        active_idx,
+                        scroll_info.rect.height(),
+                        selection_items,
+                        &scroll_info.content_rects,
+                        layout.button_spacing.y,
+                    ),
                 };
 
-                let mut new_active_idx = active_idx as isize + focus_step;
-
-                // Snap to start/end of the list if overshooting while
-                // doing half-page/full-page scroll
-                new_active_idx = if (active_idx == 0 && new_active_idx < active_idx as isize)
-                    || (active_idx == selection_items.len() - 1
-                        && new_active_idx > active_idx as isize)
-                {
-                    new_active_idx.rem_euclid(selection_items.len() as isize)
-                } else {
-                    new_active_idx.clamp(0, selection_items.len() as isize - 1)
-                };
-
-                *active_id = *selection_items
-                    .get_by_index(new_active_idx as usize)
-                    .unwrap()
-                    .0;
-                self.active_source = Some(ActiveSource::Key);
+                *active_id = next_id;
+                self.active_source = Some(ActiveSource::KeyAction);
             }
         }
 
@@ -342,7 +362,7 @@ impl<'a> Ui<'a> {
                 && active_item_removed
                 && self
                     .active_source
-                    .is_none_or(|source| source == ActiveSource::Key)
+                    .is_none_or(|source| source == ActiveSource::KeyAction)
             {
                 let nearest_item_id = if let Some(scroll_info) = &self.scroll_area_info
                     && let Some(removed_rect) = prev_active_rect
@@ -831,6 +851,59 @@ impl<'a> Ui<'a> {
             self.button_widgets.remove(&item.id);
         }
     }
+}
+
+fn find_item_at_distance_from(
+    from_idx: usize,
+    distance: f32,
+    items: &OrderedHashMap<u64, SelectionItem>,
+    item_rects: &HashMap<u64, Rect>,
+    item_gap: f32,
+) -> u64 {
+    let items_size = items.len();
+    assert!(items_size > 0);
+    assert!(from_idx < items_size);
+
+    #[derive(PartialEq)]
+    enum Dir {
+        Up,
+        Down,
+    }
+
+    let target_dist = distance.abs();
+    let (start, end, dir) = if distance >= 0.0 {
+        if from_idx == items_size - 1 {
+            return *items.get_by_index(from_idx).unwrap().0;
+        }
+        (from_idx + 1, items.len() - 1, Dir::Down)
+    } else {
+        if from_idx == 0 {
+            return *items.get_by_index(from_idx).unwrap().0;
+        }
+        (from_idx - 1, 0, Dir::Up)
+    };
+
+    let mut to_idx = start;
+    let mut total_dist = 0.0;
+    loop {
+        if let Some(rect) = item_rects.get(items.get_by_index(to_idx).unwrap().0) {
+            total_dist += rect.height() + item_gap;
+            if total_dist >= target_dist {
+                break;
+            }
+        }
+
+        if to_idx == end {
+            break;
+        };
+        to_idx = if dir == Dir::Down {
+            to_idx + 1
+        } else {
+            to_idx - 1
+        };
+    }
+
+    *items.get_by_index(to_idx).unwrap().0
 }
 
 fn create_files_thumbnail(

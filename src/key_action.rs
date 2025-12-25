@@ -14,9 +14,33 @@ impl ModifiersExtra for Modifiers {
 }
 
 #[derive(Debug)]
+pub enum ScrollAction {
+    ItemUp,
+    ItemDown,
+    HalfUp,
+    HalfDown,
+    PageUp,
+    PageDown,
+}
+
+impl ScrollAction {
+    pub fn flipped(self) -> Self {
+        use ScrollAction::*;
+        match self {
+            ItemUp => ItemDown,
+            ItemDown => ItemUp,
+            HalfUp => HalfDown,
+            HalfDown => HalfUp,
+            PageUp => PageDown,
+            PageDown => PageUp,
+        }
+    }
+}
+
+#[derive(Debug)]
 pub enum Action {
     Paste,
-    Scroll(isize),
+    Scroll(ScrollAction),
     Remove,
     HideWindow,
 }
@@ -40,23 +64,21 @@ impl KeyAction {
             {
                 if pressed {
                     let mut action = None;
-                    let scroll_step = match key {
-                        Key::ArrowUp | Key::K => -1,
-                        Key::P if modifiers.ctrl_only() => -1,
-                        Key::Tab if modifiers.shift_only() => -1,
-                        Key::ArrowDown | Key::J => 1,
-                        Key::N if modifiers.ctrl_only() => 1,
-                        Key::Tab => 1,
-
-                        // TODO: proper half-page/full-page step (based on window and item sizes)
-                        Key::D if modifiers.ctrl_only() => 5,
-                        Key::U if modifiers.ctrl_only() => -5,
-                        Key::F if modifiers.ctrl_only() => 10,
-                        Key::B if modifiers.ctrl_only() => -10,
-                        _ => 0,
+                    let scroll_action = match key {
+                        Key::ArrowUp | Key::K => Some(ScrollAction::ItemUp),
+                        Key::P if modifiers.ctrl_only() => Some(ScrollAction::ItemUp),
+                        Key::Tab if modifiers.shift_only() => Some(ScrollAction::ItemUp),
+                        Key::ArrowDown | Key::J => Some(ScrollAction::ItemDown),
+                        Key::N if modifiers.ctrl_only() => Some(ScrollAction::ItemDown),
+                        Key::Tab => Some(ScrollAction::ItemDown),
+                        Key::U if modifiers.ctrl_only() => Some(ScrollAction::HalfUp),
+                        Key::D if modifiers.ctrl_only() => Some(ScrollAction::HalfDown),
+                        Key::B if modifiers.ctrl_only() => Some(ScrollAction::PageUp),
+                        Key::F if modifiers.ctrl_only() => Some(ScrollAction::PageDown),
+                        _ => None,
                     };
-                    if scroll_step != 0 {
-                        action = Some(Action::Scroll(scroll_step));
+                    if let Some(scroll_action) = scroll_action {
+                        action = Some(Action::Scroll(scroll_action));
                     }
 
                     if action.is_none() {

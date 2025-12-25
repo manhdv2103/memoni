@@ -385,7 +385,7 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
 
             if window_shown || will_show_window {
                 let actions = key_action.from_input(&mut input.egui_input);
-                let mut scroll_steps = vec![];
+                let mut scroll_actions = vec![];
                 for action in actions {
                     match action {
                         Action::Paste => {
@@ -393,7 +393,7 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
                             will_hide_window = true;
                             paste_item_id = Some(active_id);
                         }
-                        Action::Scroll(step) => scroll_steps.push(step),
+                        Action::Scroll(scroll_action) => scroll_actions.push(scroll_action),
                         Action::Remove => {
                             info!("deleting selection item {active_id}");
                             selection.items.remove(&active_id);
@@ -416,7 +416,7 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
                     &mut active_id,
                     &selection.items,
                     ui_flow,
-                    scroll_steps,
+                    scroll_actions,
                     |selected| {
                         info!(
                             "paste item {} selected by pointer, hiding window",
