@@ -351,8 +351,9 @@ impl<'a> Ui<'a> {
                 return false;
             }
 
-            if matches!(ev, egui::Event::PointerMoved(_))
-                || matches!(ev, egui::Event::MouseWheel { .. })
+            if !self.is_initial_run
+                && (matches!(ev, egui::Event::PointerMoved(_))
+                    || matches!(ev, egui::Event::MouseWheel { .. }))
             {
                 self.active_source = Some(ActiveSource::Hovering);
             }
@@ -419,7 +420,7 @@ impl<'a> Ui<'a> {
                 && !self.is_initial_run
                 && self
                     .active_source
-                    .is_none_or(|source| source == ActiveSource::Hovering)
+                    .is_some_and(|source| source == ActiveSource::Hovering)
             {
                 let hovered_item = ctx.viewport(|vp| {
                     self.item_widget_ids
