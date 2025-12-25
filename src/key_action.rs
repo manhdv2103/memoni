@@ -62,8 +62,13 @@ impl KeyAction {
                     if action.is_none() {
                         action = match key {
                             Key::Enter | Key::Space => Some(Action::Paste),
+
                             Key::D if modifiers.shift_only() => Some(Action::Remove),
+                            Key::Delete => Some(Action::Remove),
+
                             Key::Escape => Some(Action::HideWindow),
+                            Key::Q => Some(Action::HideWindow),
+
                             _ => None,
                         };
                     }
