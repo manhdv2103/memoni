@@ -356,12 +356,7 @@ impl<'a> Ui<'a> {
 
         let full_output = self.egui_ctx.run(egui_input, |ctx| {
             // Pick new active item if the current one got removed
-            if !ctx.will_discard()
-                && active_item_removed
-                && self
-                    .active_source
-                    .is_none_or(|source| source == ActiveSource::KeyAction)
-            {
+            if !ctx.will_discard() && active_item_removed {
                 let nearest_item_id = if let Some(scroll_info) = &self.scroll_area_info
                     && let Some(removed_rect) = prev_active_rect
                 {
