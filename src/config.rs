@@ -78,6 +78,9 @@ pub struct LayoutConfig {
     pub screen_edge_gap: i32,
     pub preview_size: Dimensions,
     pub ribbon_size: f32,
+    pub pending_keys_padding: XY<f32>,
+    pub pending_keys_margin: XY<f32>,
+    pub pending_keys_corner_radius: f32,
 }
 
 impl Default for LayoutConfig {
@@ -100,6 +103,9 @@ impl Default for LayoutConfig {
                 height: 70,
             },
             ribbon_size: 70.0,
+            pending_keys_padding: XY { x: 8.0, y: 4.0 },
+            pending_keys_margin: XY { x: 8.0, y: 8.0 },
+            pending_keys_corner_radius: 6.0,
         }
     }
 }
@@ -119,6 +125,7 @@ pub struct FontConfig {
     #[serde_as(as = "OneOrMany<_>")]
     pub y_offset_factors: Vec<f32>,
     pub underline_offset: f32,
+    pub pending_keys_text_size: f32,
 }
 
 impl Default for FontConfig {
@@ -129,6 +136,7 @@ impl Default for FontConfig {
             secondary_size: 11.0,
             y_offset_factors: vec![],
             underline_offset: 0.0,
+            pending_keys_text_size: 18.0,
         }
     }
 }
@@ -157,6 +165,10 @@ pub struct ThemeConfig {
     pub preview_background: Color,
     #[serde_as(as = "DisplayFromStr")]
     pub ribbon: Color,
+    #[serde_as(as = "DisplayFromStr")]
+    pub pending_keys_foreground: Color,
+    #[serde_as(as = "DisplayFromStr")]
+    pub pending_keys_background: Color,
 }
 
 impl Default for ThemeConfig {
@@ -171,6 +183,8 @@ impl Default for ThemeConfig {
             scroll_handle: Color(0xffbbbbbb),
             preview_background: Color(0x77222222),
             ribbon: Color(0x55ffffff),
+            pending_keys_foreground: Color(0xffcccccc),
+            pending_keys_background: Color(0xa0000000),
         }
     }
 }

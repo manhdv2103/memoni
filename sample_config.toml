@@ -91,6 +91,24 @@ preview_size = { width = 40, height = 40 }
 # default: 70
 ribbon_size = 150
 
+# Pending keys overlay is an overlay that shown when waiting for a sequenced keymap (e.g., dd, gg)
+# to complete.
+#
+# Padding (px) around the text inside the pending keys overlay
+#
+# default: { x = 8, y = 4 }
+pending_keys_padding = { x = 4, y = 4 }
+
+# Margin (px) between the pending keys overlay and window edges
+#
+# default: { x = 8, y = 8 }
+pending_keys_margin = { x = 10, y = 10 }
+
+# Corner radius (px) of the pending keys overlay background
+#
+# default: 6
+pending_keys_corner_radius = 2
+
 
 # Font configuration
 [font]
@@ -128,6 +146,11 @@ y_offset_factor = -0.05
 #
 # default: 0
 underline_offset = -2
+
+# Font size (pt) for the pending keys overlay text
+#
+# default: 18
+pending_keys_text_size = 14
 
 
 # Colors (hex; can be #RRGGBB or #RRGGBBAA)
@@ -177,6 +200,16 @@ preview_background = "#434856bf"
 #
 # default: CLIPBOARD - "#0000ff55", PRIMARY - "ff000030"
 ribbon = "#48b0bd84"
+
+# Pending keys overlay text color
+#
+# default: "#cccccc"
+pending_keys_foreground = "#ffffff"
+
+# Pending keys overlay background color
+#
+# default: "#000000a0"
+pending_keys_background = "#2e313ddd"
 
 
 # Selection-specific overrides

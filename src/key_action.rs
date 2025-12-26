@@ -1,4 +1,4 @@
-use std::mem;
+use std::{fmt, mem};
 
 use anyhow::Result;
 use egui::{Event, Key, Modifiers, RawInput};
@@ -13,7 +13,52 @@ impl ModifiersExtra for Modifiers {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
+pub struct KeyChord {
+    pub key: Key,
+    pub mods: Modifiers,
+}
+impl KeyChord {
+    pub fn only_key(k: Key) -> KeyChord {
+        KeyChord {
+            key: k,
+            mods: Modifiers::NONE,
+        }
+    }
+}
+impl fmt::Display for KeyChord {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut first = true;
+        let mut write_part = |str| -> fmt::Result {
+            if !first {
+                write!(f, "-")?;
+            }
+            first = false;
+            write!(f, "{str}")?;
+            Ok(())
+        };
+
+        if self.mods.contains(Modifiers::CTRL) {
+            write_part("C")?;
+        }
+        if self.mods.contains(Modifiers::ALT) {
+            write_part("M")?;
+        }
+        if self.mods.contains(Modifiers::SHIFT) {
+            write_part("S")?;
+        }
+
+        if self.key >= Key::A && self.key <= Key::Z {
+            write_part(&self.key.name().to_lowercase())?;
+        } else {
+            write_part(self.key.symbol_or_name())?;
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
 pub enum ScrollAction {
     ItemUp,
     ItemDown,
@@ -22,7 +67,6 @@ pub enum ScrollAction {
     PageUp,
     PageDown,
 }
-
 impl ScrollAction {
     pub fn flipped(self) -> Self {
         use ScrollAction::*;
@@ -45,14 +89,17 @@ pub enum Action {
     HideWindow,
 }
 
-pub struct KeyAction {}
-
+pub struct KeyAction {
+    pub pending_keys: Vec<KeyChord>,
+}
 impl KeyAction {
     pub fn new() -> Result<Self> {
-        Ok(KeyAction {})
+        Ok(KeyAction {
+            pending_keys: vec![],
+        })
     }
 
-    pub fn from_input(&self, egui_input: &mut RawInput) -> Vec<Action> {
+    pub fn process_input(&mut self, egui_input: &mut RawInput) -> Vec<Action> {
         let mut actions = vec![];
         for event in mem::take(&mut egui_input.events) {
             if let Event::Key {
@@ -63,18 +110,21 @@ impl KeyAction {
             } = event
             {
                 if pressed {
+                    use Key::*;
+
+                    let prev_pending_keys_size = self.pending_keys.len();
                     let mut action = None;
                     let scroll_action = match key {
-                        Key::ArrowUp | Key::K => Some(ScrollAction::ItemUp),
-                        Key::P if modifiers.ctrl_only() => Some(ScrollAction::ItemUp),
-                        Key::Tab if modifiers.shift_only() => Some(ScrollAction::ItemUp),
-                        Key::ArrowDown | Key::J => Some(ScrollAction::ItemDown),
-                        Key::N if modifiers.ctrl_only() => Some(ScrollAction::ItemDown),
-                        Key::Tab => Some(ScrollAction::ItemDown),
-                        Key::U if modifiers.ctrl_only() => Some(ScrollAction::HalfUp),
-                        Key::D if modifiers.ctrl_only() => Some(ScrollAction::HalfDown),
-                        Key::B if modifiers.ctrl_only() => Some(ScrollAction::PageUp),
-                        Key::F if modifiers.ctrl_only() => Some(ScrollAction::PageDown),
+                        ArrowUp | K => Some(ScrollAction::ItemUp),
+                        P if modifiers.ctrl_only() => Some(ScrollAction::ItemUp),
+                        Tab if modifiers.shift_only() => Some(ScrollAction::ItemUp),
+                        ArrowDown | J => Some(ScrollAction::ItemDown),
+                        N if modifiers.ctrl_only() => Some(ScrollAction::ItemDown),
+                        Tab => Some(ScrollAction::ItemDown),
+                        U if modifiers.ctrl_only() => Some(ScrollAction::HalfUp),
+                        D if modifiers.ctrl_only() => Some(ScrollAction::HalfDown),
+                        B if modifiers.ctrl_only() => Some(ScrollAction::PageUp),
+                        F if modifiers.ctrl_only() => Some(ScrollAction::PageDown),
                         _ => None,
                     };
                     if let Some(scroll_action) = scroll_action {
@@ -83,19 +133,46 @@ impl KeyAction {
 
                     if action.is_none() {
                         action = match key {
-                            Key::Enter | Key::Space => Some(Action::Paste),
+                            Enter | Space => Some(Action::Paste),
 
-                            Key::D if modifiers.shift_only() => Some(Action::Remove),
-                            Key::Delete => Some(Action::Remove),
+                            D => {
+                                if self.pending_keys.len() == 1
+                                    && let Some(pending_key) = self.pending_keys.first()
+                                    && *pending_key == KeyChord::only_key(D)
+                                {
+                                    self.pending_keys.clear();
+                                    Some(Action::Remove)
+                                } else {
+                                    self.pending_keys.push(KeyChord::only_key(D));
+                                    None
+                                }
+                            }
+                            Delete => Some(Action::Remove),
 
-                            Key::Escape => Some(Action::HideWindow),
-                            Key::Q => Some(Action::HideWindow),
+                            Escape => {
+                                if self.pending_keys.is_empty() {
+                                    Some(Action::HideWindow)
+                                } else {
+                                    debug!("received Escape, clearing pending keys");
+                                    self.pending_keys.clear();
+                                    None
+                                }
+                            }
+                            Q => Some(Action::HideWindow),
 
                             _ => None,
                         };
                     }
 
-                    if let Some(action) = action {
+                    if !self.pending_keys.is_empty()
+                        && prev_pending_keys_size == self.pending_keys.len()
+                    {
+                        debug!(
+                            "received {key:?} with {modifiers:?}, triggering invalid key sequence: {:?}",
+                            self.pending_keys
+                        );
+                        self.pending_keys.clear();
+                    } else if let Some(action) = action {
                         debug!(
                             "received {key:?} with {modifiers:?}, converting to action {action:?}"
                         );

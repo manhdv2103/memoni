@@ -206,7 +206,8 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
     let mut gl_context = OpenGLContext::new(&window, &config)?;
     let key_converter = X11KeyConverter::new(&window.conn)?;
     let mut input = Input::new(&window, &key_converter)?;
-    let key_action = KeyAction::new()?;
+    let mut key_action = KeyAction::new()?;
+
     let persistence = Persistence::new(args.selection)?;
     let mut selection = Selection::new(
         persistence.load_selection_items()?,
@@ -384,7 +385,7 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
             }
 
             if window_shown || will_show_window {
-                let actions = key_action.from_input(&mut input.egui_input);
+                let actions = key_action.process_input(&mut input.egui_input);
                 let mut scroll_actions = vec![];
                 for action in actions {
                     match action {
@@ -416,7 +417,8 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
                     &mut active_id,
                     &selection.items,
                     ui_flow,
-                    scroll_actions,
+                    &scroll_actions,
+                    &key_action.pending_keys,
                     |selected| {
                         info!(
                             "paste item {} selected by pointer, hiding window",
