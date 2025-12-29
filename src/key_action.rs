@@ -73,6 +73,8 @@ pub enum ScrollAction {
     HalfDown,
     PageUp,
     PageDown,
+    ToTop,
+    ToBottom,
 }
 impl ScrollAction {
     pub fn flipped(self) -> Self {
@@ -84,6 +86,8 @@ impl ScrollAction {
             HalfDown => HalfUp,
             PageUp => PageDown,
             PageDown => PageUp,
+            ToTop => ToBottom,
+            ToBottom => ToTop,
         }
     }
 }
@@ -120,7 +124,9 @@ impl KeyAction {
                     use Key::*;
 
                     let prev_pending_keys_size = self.pending_keys.len();
+                    let mut consumed_pending_keys = None;
                     let mut action = None;
+
                     let scroll_action = match key {
                         ArrowUp | K => Some(ScrollAction::ItemUp),
                         ArrowDown | J => Some(ScrollAction::ItemDown),
@@ -136,6 +142,22 @@ impl KeyAction {
 
                         B if modifiers.ctrl_only() => Some(ScrollAction::PageUp),
                         F if modifiers.ctrl_only() => Some(ScrollAction::PageDown),
+
+                        G if modifiers.real_shift_only() => Some(ScrollAction::ToBottom),
+                        G => {
+                            if self.pending_keys.len() == 1
+                                && let Some(pending_key) = self.pending_keys.first()
+                                && *pending_key == KeyChord::only_key(G)
+                            {
+                                consumed_pending_keys =
+                                    Some(self.pending_keys.drain(..).collect::<Vec<_>>());
+                                Some(ScrollAction::ToTop)
+                            } else {
+                                self.pending_keys.push(KeyChord::only_key(G));
+                                None
+                            }
+                        }
+
                         _ => None,
                     };
                     if let Some(scroll_action) = scroll_action {
@@ -151,7 +173,8 @@ impl KeyAction {
                                     && let Some(pending_key) = self.pending_keys.first()
                                     && *pending_key == KeyChord::only_key(D)
                                 {
-                                    self.pending_keys.clear();
+                                    consumed_pending_keys =
+                                        Some(self.pending_keys.drain(..).collect::<Vec<_>>());
                                     Some(Action::Remove)
                                 } else {
                                     self.pending_keys.push(KeyChord::only_key(D));
@@ -184,9 +207,16 @@ impl KeyAction {
                         );
                         self.pending_keys.clear();
                     } else if let Some(action) = action {
-                        debug!(
-                            "received {key:?} with {modifiers:?}, converting to action {action:?}"
-                        );
+                        if let Some(pending_keys) = consumed_pending_keys {
+                            debug!(
+                                "received {key:?} with {modifiers:?}, pending keys: {:?}, converting to action {action:?}",
+                                pending_keys
+                            );
+                        } else {
+                            debug!(
+                                "received {key:?} with {modifiers:?}, converting to action {action:?}"
+                            );
+                        }
                         actions.push(action);
                     }
                 }

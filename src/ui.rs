@@ -313,6 +313,9 @@ impl<'a> Ui<'a> {
                         selection_items,
                         &scroll_info.content_rects,
                     ),
+
+                    ScrollAction::ToTop => id_from_idx(0),
+                    ScrollAction::ToBottom => id_from_idx(items_size - 1),
                 };
 
                 *active_id = next_id;
