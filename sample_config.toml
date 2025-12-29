@@ -96,7 +96,7 @@ ribbon_size = 150
 #
 # Padding (px) around the text inside the pending keys overlay
 #
-# default: { x = 8, y = 4 }
+# default: { x = 8, y = 6 }
 pending_keys_padding = { x = 4, y = 4 }
 
 # Margin (px) between the pending keys overlay and window edges
@@ -106,7 +106,7 @@ pending_keys_margin = { x = 10, y = 10 }
 
 # Corner radius (px) of the pending keys overlay background
 #
-# default: 6
+# default: 5
 pending_keys_corner_radius = 2
 
 
@@ -149,7 +149,7 @@ underline_offset = -2
 
 # Font size (pt) for the pending keys overlay text
 #
-# default: 18
+# default: 16
 pending_keys_text_size = 14
 
 

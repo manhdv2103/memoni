@@ -103,9 +103,9 @@ impl Default for LayoutConfig {
                 height: 70,
             },
             ribbon_size: 70.0,
-            pending_keys_padding: XY { x: 8.0, y: 4.0 },
+            pending_keys_padding: XY { x: 8.0, y: 6.0 },
             pending_keys_margin: XY { x: 8.0, y: 8.0 },
-            pending_keys_corner_radius: 6.0,
+            pending_keys_corner_radius: 5.0,
         }
     }
 }
@@ -136,7 +136,7 @@ impl Default for FontConfig {
             secondary_size: 11.0,
             y_offset_factors: vec![],
             underline_offset: 0.0,
-            pending_keys_text_size: 18.0,
+            pending_keys_text_size: 16.0,
         }
     }
 }
