@@ -6,10 +6,17 @@ use log::debug;
 
 trait ModifiersExtra {
     fn ctrl_only(&self) -> bool;
+    fn real_shift_only(&self) -> bool;
 }
 impl ModifiersExtra for Modifiers {
+    #[inline]
     fn ctrl_only(&self) -> bool {
         self.ctrl && !(self.alt || self.shift)
+    }
+
+    #[inline]
+    fn real_shift_only(&self) -> bool {
+        self.shift && !(self.alt || self.ctrl)
     }
 }
 
@@ -116,13 +123,17 @@ impl KeyAction {
                     let mut action = None;
                     let scroll_action = match key {
                         ArrowUp | K => Some(ScrollAction::ItemUp),
-                        P if modifiers.ctrl_only() => Some(ScrollAction::ItemUp),
-                        Tab if modifiers.shift_only() => Some(ScrollAction::ItemUp),
                         ArrowDown | J => Some(ScrollAction::ItemDown),
+
+                        P if modifiers.ctrl_only() => Some(ScrollAction::ItemUp),
                         N if modifiers.ctrl_only() => Some(ScrollAction::ItemDown),
+
+                        Tab if modifiers.real_shift_only() => Some(ScrollAction::ItemUp),
                         Tab => Some(ScrollAction::ItemDown),
+
                         U if modifiers.ctrl_only() => Some(ScrollAction::HalfUp),
                         D if modifiers.ctrl_only() => Some(ScrollAction::HalfDown),
+
                         B if modifiers.ctrl_only() => Some(ScrollAction::PageUp),
                         F if modifiers.ctrl_only() => Some(ScrollAction::PageDown),
                         _ => None,
