@@ -158,17 +158,10 @@ impl KeyAction {
                         continue;
                     }
 
-                    // For keymap with modifiers, matches the modifiers strictly
                     self.pending_keys.push(KeyChord::of(key, modifiers));
-                    let mut keymap_node = self.action_keymap_trie.get_node(&self.pending_keys);
-                    if keymap_node.is_none() {
-                        // For keymap without modifiers, ignores the modifiers when matching
-                        *self.pending_keys.last_mut().unwrap() = KeyChord::of_key(key);
-                        keymap_node = self.action_keymap_trie.get_node(&self.pending_keys);
-                    }
-
-                    if let Some(node) = keymap_node {
-                        if let Some(action) = node.value {
+                    if let Some(keymap_node) = self.action_keymap_trie.get_node(&self.pending_keys)
+                    {
+                        if let Some(action) = keymap_node.value {
                             debug!(
                                 "converting keymap {:?} to action {action:?}",
                                 self.pending_keys
