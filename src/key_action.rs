@@ -1,36 +1,21 @@
-use std::{fmt, mem};
+use std::{fmt, mem, sync::LazyLock};
 
 use anyhow::Result;
 use egui::{Event, Key, Modifiers, RawInput};
 use log::debug;
 
-trait ModifiersExtra {
-    fn ctrl_only(&self) -> bool;
-    fn real_shift_only(&self) -> bool;
-}
-impl ModifiersExtra for Modifiers {
-    #[inline]
-    fn ctrl_only(&self) -> bool {
-        self.ctrl && !(self.alt || self.shift)
-    }
-
-    #[inline]
-    fn real_shift_only(&self) -> bool {
-        self.shift && !(self.alt || self.ctrl)
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub struct KeyChord {
     pub key: Key,
     pub mods: Modifiers,
 }
 impl KeyChord {
-    pub fn only_key(k: Key) -> KeyChord {
-        KeyChord {
-            key: k,
-            mods: Modifiers::NONE,
-        }
+    pub fn of(key: Key, mods: Modifiers) -> KeyChord {
+        KeyChord { key, mods }
+    }
+
+    pub fn of_key(key: Key) -> KeyChord {
+        Self::of(key, Modifiers::NONE)
     }
 }
 impl fmt::Display for KeyChord {
@@ -92,7 +77,7 @@ impl ScrollAction {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum Action {
     Paste,
     Scroll(ScrollAction),
@@ -100,12 +85,58 @@ pub enum Action {
     HideWindow,
 }
 
+#[rustfmt::skip]
+static ACTION_KEYMAPS: LazyLock<Vec<(Vec<KeyChord>, Action)>> = LazyLock::new(|| {
+    use Action::*;
+    use Key::*;
+    use KeyChord as KC;
+    use Modifiers as M;
+    vec![
+        (vec![KC::of_key(ArrowUp)]          , Scroll(ScrollAction::ItemUp)),
+        (vec![KC::of_key(ArrowDown)]        , Scroll(ScrollAction::ItemDown)),
+
+        (vec![KC::of_key(K)]                , Scroll(ScrollAction::ItemUp)),
+        (vec![KC::of_key(J)]                , Scroll(ScrollAction::ItemDown)),
+
+        (vec![KC::of(P, M::CTRL)]           , Scroll(ScrollAction::ItemUp)),
+        (vec![KC::of(N, M::CTRL)]           , Scroll(ScrollAction::ItemDown)),
+
+        (vec![KC::of(Tab, M::SHIFT)]        , Scroll(ScrollAction::ItemUp)),
+        (vec![KC::of_key(Tab)]              , Scroll(ScrollAction::ItemDown)),
+
+        (vec![KC::of(U, M::CTRL)]           , Scroll(ScrollAction::HalfUp)),
+        (vec![KC::of(D, M::CTRL)]           , Scroll(ScrollAction::HalfDown)),
+
+        (vec![KC::of(B, M::CTRL)]           , Scroll(ScrollAction::PageUp)),
+        (vec![KC::of(F, M::CTRL)]           , Scroll(ScrollAction::PageDown)),
+
+        (vec![KC::of_key(G), KC::of_key(G)] , Scroll(ScrollAction::ToTop)),
+        (vec![KC::of(G, M::SHIFT)]          , Scroll(ScrollAction::ToBottom)),
+
+        (vec![KC::of_key(Enter)]            , Action::Paste),
+        (vec![KC::of_key(Space)]            , Action::Paste),
+
+        (vec![KC::of_key(D), KC::of_key(D)] , Remove),
+        (vec![KC::of_key(Delete)]           , Remove),
+
+        (vec![KC::of_key(Escape)]           , HideWindow),
+        (vec![KC::of_key(Q)]                , HideWindow),
+    ]
+});
+
 pub struct KeyAction {
+    action_keymap_trie: Trie<&'static KeyChord, Action>,
     pub pending_keys: Vec<KeyChord>,
 }
 impl KeyAction {
     pub fn new() -> Result<Self> {
+        let mut action_keymap_trie = Trie::default();
+        for (keymap, action) in ACTION_KEYMAPS.iter() {
+            action_keymap_trie.insert(keymap, *action);
+        }
+
         Ok(KeyAction {
+            action_keymap_trie,
             pending_keys: vec![],
         })
     }
@@ -121,103 +152,35 @@ impl KeyAction {
             } = event
             {
                 if pressed {
-                    use Key::*;
-
-                    let prev_pending_keys_size = self.pending_keys.len();
-                    let mut consumed_pending_keys = None;
-                    let mut action = None;
-
-                    let scroll_action = match key {
-                        ArrowUp | K => Some(ScrollAction::ItemUp),
-                        ArrowDown | J => Some(ScrollAction::ItemDown),
-
-                        P if modifiers.ctrl_only() => Some(ScrollAction::ItemUp),
-                        N if modifiers.ctrl_only() => Some(ScrollAction::ItemDown),
-
-                        Tab if modifiers.real_shift_only() => Some(ScrollAction::ItemUp),
-                        Tab => Some(ScrollAction::ItemDown),
-
-                        U if modifiers.ctrl_only() => Some(ScrollAction::HalfUp),
-                        D if modifiers.ctrl_only() => Some(ScrollAction::HalfDown),
-
-                        B if modifiers.ctrl_only() => Some(ScrollAction::PageUp),
-                        F if modifiers.ctrl_only() => Some(ScrollAction::PageDown),
-
-                        G if modifiers.real_shift_only() => Some(ScrollAction::ToBottom),
-                        G => {
-                            if self.pending_keys.len() == 1
-                                && let Some(pending_key) = self.pending_keys.first()
-                                && *pending_key == KeyChord::only_key(G)
-                            {
-                                consumed_pending_keys =
-                                    Some(self.pending_keys.drain(..).collect::<Vec<_>>());
-                                Some(ScrollAction::ToTop)
-                            } else {
-                                self.pending_keys.push(KeyChord::only_key(G));
-                                None
-                            }
-                        }
-
-                        _ => None,
-                    };
-                    if let Some(scroll_action) = scroll_action {
-                        action = Some(Action::Scroll(scroll_action));
-                    }
-
-                    if action.is_none() {
-                        action = match key {
-                            Enter | Space => Some(Action::Paste),
-
-                            D => {
-                                if self.pending_keys.len() == 1
-                                    && let Some(pending_key) = self.pending_keys.first()
-                                    && *pending_key == KeyChord::only_key(D)
-                                {
-                                    consumed_pending_keys =
-                                        Some(self.pending_keys.drain(..).collect::<Vec<_>>());
-                                    Some(Action::Remove)
-                                } else {
-                                    self.pending_keys.push(KeyChord::only_key(D));
-                                    None
-                                }
-                            }
-                            Delete => Some(Action::Remove),
-
-                            Escape => {
-                                if self.pending_keys.is_empty() {
-                                    Some(Action::HideWindow)
-                                } else {
-                                    debug!("received Escape, clearing pending keys");
-                                    self.pending_keys.clear();
-                                    None
-                                }
-                            }
-                            Q => Some(Action::HideWindow),
-
-                            _ => None,
-                        };
-                    }
-
-                    if !self.pending_keys.is_empty()
-                        && prev_pending_keys_size == self.pending_keys.len()
-                    {
-                        debug!(
-                            "received {key:?} with {modifiers:?}, triggering invalid key sequence: {:?}",
-                            self.pending_keys
-                        );
+                    if key == Key::Escape && !self.pending_keys.is_empty() {
+                        debug!("received Escape, clearing pending keys");
                         self.pending_keys.clear();
-                    } else if let Some(action) = action {
-                        if let Some(pending_keys) = consumed_pending_keys {
+                        continue;
+                    }
+
+                    // For keymap with modifiers, matches the modifiers strictly
+                    self.pending_keys.push(KeyChord::of(key, modifiers));
+                    let mut keymap_node = self.action_keymap_trie.get_node(&self.pending_keys);
+                    if keymap_node.is_none() {
+                        // For keymap without modifiers, ignores the modifiers when matching
+                        *self.pending_keys.last_mut().unwrap() = KeyChord::of_key(key);
+                        keymap_node = self.action_keymap_trie.get_node(&self.pending_keys);
+                    }
+
+                    if let Some(node) = keymap_node {
+                        if let Some(action) = node.value {
                             debug!(
-                                "received {key:?} with {modifiers:?}, pending keys: {:?}, converting to action {action:?}",
-                                pending_keys
+                                "converting keymap {:?} to action {action:?}",
+                                self.pending_keys
                             );
+                            actions.push(action);
+                            self.pending_keys.clear();
                         } else {
-                            debug!(
-                                "received {key:?} with {modifiers:?}, converting to action {action:?}"
-                            );
+                            debug!("continuing building keymap: {:?}", self.pending_keys);
                         }
-                        actions.push(action);
+                    } else {
+                        debug!("received invalid keymap: {:?}", self.pending_keys);
+                        self.pending_keys.clear();
                     }
                 }
             } else {
@@ -226,5 +189,59 @@ impl KeyAction {
         }
 
         actions
+    }
+}
+
+// Extremely simple trie implementation
+
+struct Trie<K, V> {
+    value: Option<V>,
+    next: Vec<(K, Trie<K, V>)>,
+}
+
+impl<K, V> Default for Trie<K, V> {
+    fn default() -> Self {
+        Trie {
+            value: None,
+            next: vec![],
+        }
+    }
+}
+
+impl<K, V> Trie<K, V>
+where
+    K: PartialEq + Clone,
+{
+    fn insert<I>(&mut self, keys: I, value: V)
+    where
+        I: IntoIterator<Item = K>,
+    {
+        let mut node = self;
+        for key in keys {
+            if let Some(pos) = node.next.iter().position(|(k, _)| *k == key) {
+                node = &mut node.next[pos].1;
+            } else {
+                node.next.push((key.clone(), Trie::default()));
+                let len = node.next.len();
+                node = &mut node.next[len - 1].1;
+            }
+        }
+
+        node.value = Some(value);
+    }
+
+    fn get_node<I>(&self, keys: I) -> Option<&Trie<K, V>>
+    where
+        I: IntoIterator<Item = K>,
+    {
+        let mut node = self;
+        for key in keys {
+            match node.next.iter().find(|(k, _)| *k == key) {
+                Some((_, child)) => node = child,
+                None => return None,
+            }
+        }
+
+        Some(node)
     }
 }
