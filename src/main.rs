@@ -397,7 +397,10 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
                         Action::Scroll(scroll_action) => scroll_actions.push(scroll_action),
                         Action::Remove => {
                             info!("deleting selection item {active_id}");
-                            selection.items.remove(&active_id);
+                            let removed_item = selection.items.remove(&active_id);
+                            if let Some(item) = removed_item {
+                                ui.remove_button_widgets(std::iter::once(item));
+                            }
                             persistence.save_selection_items(&selection.items)?;
                         }
                         Action::HideWindow => {
