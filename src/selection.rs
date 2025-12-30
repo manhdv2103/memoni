@@ -896,6 +896,12 @@ impl<'a> Selection<'a> {
     }
 
     pub fn paste(&mut self, item_id: u64, pointer_original_pos: (i16, i16)) -> Result<()> {
+        // Move paste item to the top
+        let Some(item) = self.items.remove(&item_id) else {
+            bail!("item not found: {item_id}");
+        };
+        self.items.insert(self.metadata.pinned_count, item_id, item);
+
         let conn = &self.window.conn;
         let paste_window = self.window.win_id.get();
 
