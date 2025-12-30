@@ -81,6 +81,7 @@ pub struct LayoutConfig {
     pub pending_keys_padding: XY<f32>,
     pub pending_keys_margin: XY<f32>,
     pub pending_keys_corner_radius: f32,
+    pub pin_size: f32,
 }
 
 impl Default for LayoutConfig {
@@ -106,6 +107,7 @@ impl Default for LayoutConfig {
             pending_keys_padding: XY { x: 8.0, y: 6.0 },
             pending_keys_margin: XY { x: 8.0, y: 8.0 },
             pending_keys_corner_radius: 5.0,
+            pin_size: 4.0,
         }
     }
 }
@@ -169,6 +171,8 @@ pub struct ThemeConfig {
     pub pending_keys_foreground: Color,
     #[serde_as(as = "DisplayFromStr")]
     pub pending_keys_background: Color,
+    #[serde_as(as = "DisplayFromStr")]
+    pub pin_color: Color,
 }
 
 impl Default for ThemeConfig {
@@ -185,6 +189,7 @@ impl Default for ThemeConfig {
             ribbon: Color(0x55ffffff),
             pending_keys_foreground: Color(0xffcccccc),
             pending_keys_background: Color(0xa0000000),
+            pin_color: Color(0xffcccccc),
         }
     }
 }

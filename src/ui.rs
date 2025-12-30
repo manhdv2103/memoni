@@ -23,7 +23,7 @@ use crate::{
     freedesktop_cache::get_cached_thumbnail,
     key_action::{KeyChord, ScrollAction},
     ordered_hash_map::OrderedHashMap,
-    selection::SelectionItem,
+    selection::{SelectionItem, SelectionMetadata},
     utils::{is_image_mime, is_plaintext_mime, percent_decode, utf16le_to_string},
     widgets::clipboard_button::ClipboardButton,
 };
@@ -80,14 +80,17 @@ struct ScrollAreaInfo {
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 enum ActiveSource {
-    KeyAction,
+    ScrollAction,
     Hovering,
+    External,
 }
 
 pub struct Ui<'a> {
     pub egui_ctx: egui::Context,
     config: &'a Config,
     fonts: FontDefinitions,
+    prev_active_id: u64,
+    prev_active_idx: usize,
     item_widget_ids: HashMap<u64, egui::Id>,
     active_source: Option<ActiveSource>,
     scroll_area_info: Option<ScrollAreaInfo>,
@@ -165,6 +168,8 @@ impl<'a> Ui<'a> {
             egui_ctx,
             config,
             fonts,
+            prev_active_id: 0,
+            prev_active_idx: 0,
             item_widget_ids: HashMap::new(),
             active_source: None,
             scroll_area_info: None,
@@ -251,6 +256,7 @@ impl<'a> Ui<'a> {
         egui_input: RawInput,
         active_id: &mut u64,
         selection_items: &OrderedHashMap<u64, SelectionItem>,
+        selection_metadata: &SelectionMetadata,
         flow: UiFlow,
         scroll_actions: &[ScrollAction],
         pending_keys: &[KeyChord],
@@ -259,7 +265,14 @@ impl<'a> Ui<'a> {
         trace!("painting ui with flow {flow:?}");
         let mut run_error = None;
         let layout = &self.config.layout;
-        let prev_active_id = *active_id;
+        let active_idx = selection_items
+            .iter()
+            .position(|(id, _)| *id == *active_id)
+            .unwrap_or(0);
+
+        if self.prev_active_id != *active_id || self.prev_active_idx != active_idx {
+            self.active_source = Some(ActiveSource::External);
+        }
 
         let items_size = selection_items.len();
         let items_removed = items_size < self.item_widget_ids.len();
@@ -267,7 +280,7 @@ impl<'a> Ui<'a> {
         let prev_active_rect = self
             .scroll_area_info
             .as_ref()
-            .and_then(|info| info.content_rects.get(&prev_active_id).cloned());
+            .and_then(|info| info.content_rects.get(&self.prev_active_id).cloned());
 
         for action in scroll_actions {
             let action = if flow == UiFlow::TopToBottom {
@@ -276,9 +289,7 @@ impl<'a> Ui<'a> {
                 action.flipped()
             };
 
-            if let Some(active_idx) = selection_items.iter().position(|(id, _)| *id == *active_id)
-                && let Some(scroll_info) = &self.scroll_area_info
-            {
+            if let Some(scroll_info) = &self.scroll_area_info {
                 let id_from_idx = |idx| *selection_items.get_by_index(idx).unwrap().0;
                 let next_id = match action {
                     ScrollAction::ItemUp => id_from_idx((active_idx + items_size - 1) % items_size),
@@ -319,7 +330,7 @@ impl<'a> Ui<'a> {
                 };
 
                 *active_id = next_id;
-                self.active_source = Some(ActiveSource::KeyAction);
+                self.active_source = Some(ActiveSource::ScrollAction);
             }
         }
 
@@ -355,6 +366,10 @@ impl<'a> Ui<'a> {
         } else if items_removed {
             self.egui_ctx
                 .request_discard("Recalculate scroll area's content size when items got removed");
+        } else if self.prev_active_idx != active_idx {
+            self.egui_ctx.request_discard(
+                "Recalculate scroll area's content rects when active item got moved",
+            );
         }
 
         let full_output = self.egui_ctx.run(egui_input, |ctx| {
@@ -401,7 +416,8 @@ impl<'a> Ui<'a> {
             // Active item is scrolled out of view, pick a new one
             if !ctx.will_discard()
                 && !self.is_initial_run
-                && prev_active_id == *active_id
+                && self.prev_active_id == *active_id
+                && self.prev_active_idx == active_idx
                 && let Some(scroll_info) = &self.scroll_area_info
                 && let Some(active_rect) = scroll_info.content_rects.get(active_id)
                 && !scroll_info.rect.contains_rect(*active_rect)
@@ -468,10 +484,12 @@ impl<'a> Ui<'a> {
                 .map(|s| s.rect.height() < scroll_content_size)
                 .unwrap_or(false);
 
+            // FIXME: scrolls to active item on initial run, not scrolling to top
             let sets_default_scroll_offset = self.is_initial_run
                 // Force items to be at the bottom of the window
                 || (flow == UiFlow::BottomToTop && !content_overflowed);
-            let sets_active_scroll_offset = prev_active_id != *active_id;
+            let sets_active_scroll_offset =
+                self.prev_active_id != *active_id || self.prev_active_idx != active_idx;
             let next_scroll_offset = if (sets_default_scroll_offset
                 || sets_active_scroll_offset
                 || items_removed)
@@ -493,8 +511,7 @@ impl<'a> Ui<'a> {
                     && scroll_offset + scroll_rect.height() > scroll_content_size
                 {
                     Some(scroll_content_size - scroll_rect.height())
-                } else if let Some(active_item) = selection_items.get(active_id)
-                    && let Some(&active_rect) = scroll_area.content_rects.get(&active_item.id)
+                } else if let Some(&active_rect) = scroll_area.content_rects.get(active_id)
                     && !scroll_rect.contains_rect(active_rect)
                 {
                     let padding = layout.window_padding.y as f32;
@@ -529,13 +546,14 @@ impl<'a> Ui<'a> {
 
                     let layout_reversed = flow == UiFlow::BottomToTop;
                     let item_it: Box<dyn Iterator<Item = _>> = if layout_reversed {
-                        Box::new(selection_items.iter().rev())
+                        Box::new(selection_items.iter().enumerate().rev())
                     } else {
-                        Box::new(selection_items.iter())
+                        Box::new(selection_items.iter().enumerate())
                     };
 
-                    for (&id, item) in item_it {
+                    for (i, (&id, item)) in item_it {
                         let is_active = id == *active_id;
+                        let is_pinned = i < selection_metadata.pinned_count;
 
                         let btn = ui.add(
                             self.button_widgets
@@ -544,7 +562,8 @@ impl<'a> Ui<'a> {
                                     anyhow!("missing button widget for item {}", item.id)
                                 })?
                                 .clone()
-                                .is_active(is_active),
+                                .is_active(is_active)
+                                .is_pinned(is_pinned),
                         );
 
                         self.item_widget_ids.insert(id, btn.id);
@@ -572,6 +591,8 @@ impl<'a> Ui<'a> {
         });
 
         self.is_initial_run = false;
+        self.prev_active_id = *active_id;
+        self.prev_active_idx = active_idx;
 
         match run_error {
             None => Ok(full_output),
@@ -787,7 +808,9 @@ impl<'a> Ui<'a> {
 
         let mut btn = ClipboardButton::default()
             .underline_offset(config.font.underline_offset)
-            .with_preview_padding(config.layout.button_with_preview_padding);
+            .with_preview_padding(config.layout.button_with_preview_padding)
+            .pin_size(config.layout.pin_size)
+            .pin_color(config.theme.pin_color);
 
         if let Some((action, file_uris)) = files {
             let file_paths = file_uris

@@ -82,6 +82,7 @@ pub enum Action {
     Paste,
     Scroll(ScrollAction),
     Remove,
+    Pin,
     HideWindow,
 }
 
@@ -118,6 +119,8 @@ static ACTION_KEYMAPS: LazyLock<Vec<(Vec<KeyChord>, Action)>> = LazyLock::new(||
 
         (vec![KC::of_key(D), KC::of_key(D)] , Remove),
         (vec![KC::of_key(Delete)]           , Remove),
+
+        (vec![KC::of_key(P)]                , Pin),
 
         (vec![KC::of_key(Escape)]           , HideWindow),
         (vec![KC::of_key(Q)]                , HideWindow),

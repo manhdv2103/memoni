@@ -13,7 +13,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result, anyhow, bail};
 use bincode::{Decode, Encode};
 use log::{debug, error, info, trace, warn};
 use x11rb::protocol::{
@@ -66,6 +66,11 @@ x11rb::atom_manager! {
 
 type SelectionData = BTreeMap<String, Vec<u8>>;
 type Owner = u32;
+
+#[derive(Debug, Default, Encode, Decode)]
+pub struct SelectionMetadata {
+    pub pinned_count: usize,
+}
 
 #[derive(Debug, Encode, Decode)]
 pub struct SelectionItem {
@@ -134,6 +139,7 @@ impl<S, M> Task<S, M> {
 
 pub struct Selection<'a> {
     pub items: OrderedHashMap<u64, SelectionItem>,
+    pub metadata: SelectionMetadata,
 
     window: &'a X11Window<'a>,
     screen: &'a Screen,
@@ -152,7 +158,7 @@ pub struct Selection<'a> {
 
 impl<'a> Selection<'a> {
     pub fn new(
-        initial_items: OrderedHashMap<u64, SelectionItem>,
+        initial_data: (OrderedHashMap<u64, SelectionItem>, SelectionMetadata),
         window: &'a X11Window,
         key_converter: &'a X11KeyConverter,
         selection_type: SelectionType,
@@ -180,7 +186,8 @@ impl<'a> Selection<'a> {
         )?;
 
         Ok(Selection {
-            items: initial_items,
+            items: initial_data.0,
+            metadata: initial_data.1,
             window,
             screen: &window.screen,
             key_converter,
@@ -809,13 +816,24 @@ impl<'a> Selection<'a> {
         let mut is_previously_seen = false;
         let mut new_item = None;
         if self.items.contains_key(&new_item_id) {
-            debug!("selection is duplicated, removing old one");
-            let previous_seen_item = self.items.remove(&new_item_id).unwrap();
-            self.items.push_front(new_item_id, previous_seen_item);
+            if self
+                .items
+                .iter()
+                .take(self.metadata.pinned_count)
+                .any(|(&id, _)| id == new_item_id)
+            {
+                debug!("selection is duplicated, old one is pinned, keeping old selection");
+            } else {
+                debug!("selection is duplicated, removing old one");
+                let previous_seen_item = self.items.remove(&new_item_id).unwrap();
+                self.items
+                    .insert(self.metadata.pinned_count, new_item_id, previous_seen_item);
+            }
 
             is_previously_seen = true;
         } else {
-            self.items.push_front(
+            self.items.insert(
+                self.metadata.pinned_count,
                 new_item_id,
                 SelectionItem {
                     id: new_item_id,
@@ -828,7 +846,7 @@ impl<'a> Selection<'a> {
                 removed.extend(removed_map.into_iter().map(|(_, i)| i));
             };
 
-            new_item = self.items.front().map(|(_, i)| i);
+            new_item = self.items.get(&new_item_id);
         }
 
         info!("selection transfer completed with new selection: {new_item_id}");
@@ -961,6 +979,29 @@ impl<'a> Selection<'a> {
         self.paste_item_id = Some(item_id);
 
         Ok(())
+    }
+
+    /// Returns true if item is pinned, false if item is unpinned
+    pub fn toggle_pin(&mut self, item_id: u64) -> Result<bool> {
+        let is_pinned = self
+            .items
+            .iter()
+            .take(self.metadata.pinned_count)
+            .any(|(&id, _)| id == item_id);
+
+        let Some(item) = self.items.remove(&item_id) else {
+            bail!("item not found: {item_id}");
+        };
+
+        if is_pinned {
+            self.metadata.pinned_count -= 1;
+            self.items.insert(self.metadata.pinned_count, item_id, item);
+            Ok(false)
+        } else {
+            self.metadata.pinned_count += 1;
+            self.items.push_front(item_id, item);
+            Ok(true)
+        }
     }
 }
 

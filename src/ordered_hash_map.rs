@@ -36,6 +36,12 @@ where
         self.map.insert(key, value)
     }
 
+    pub fn insert(&mut self, index: usize, key: K, value: V) -> Option<V> {
+        self.remove_in_keys(&key);
+        self.keys.insert(index, key.clone());
+        self.map.insert(key, value)
+    }
+
     fn remove_in_keys(&mut self, key: &K) {
         if self.map.contains_key(key)
             && let Some(pos) = self.keys.iter().position(|k| k == key)
@@ -185,7 +191,7 @@ where
     K: Eq + Hash + Clone,
 {
     fn len(&self) -> usize {
-        self.map.len()
+        self.map.len() - self.idx - self.back_idx
     }
 }
 

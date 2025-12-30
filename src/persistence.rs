@@ -4,7 +4,7 @@ use std::{collections::VecDeque, fs, path::PathBuf};
 
 use crate::{
     ordered_hash_map::OrderedHashMap,
-    selection::{SelectionItem, SelectionType},
+    selection::{SelectionItem, SelectionMetadata, SelectionType},
 };
 
 const BINCODE_CONFIG: bincode::config::Configuration = bincode::config::standard();
@@ -26,30 +26,38 @@ impl Persistence {
         Ok(Persistence { file_path })
     }
 
-    pub fn save_selection_items(&self, items: &OrderedHashMap<u64, SelectionItem>) -> Result<()> {
+    pub fn save_selection_data(
+        &self,
+        items: &OrderedHashMap<u64, SelectionItem>,
+        metadata: &SelectionMetadata,
+    ) -> Result<()> {
         info!("saving selection items to {:?}", self.file_path);
-        let serialized_data = bincode::encode_to_vec(items, BINCODE_CONFIG)?;
+        let serialized_data = bincode::encode_to_vec((items, metadata), BINCODE_CONFIG)?;
         fs::write(&self.file_path, serialized_data)?;
         Ok(())
     }
 
-    pub fn load_selection_items(&self) -> Result<OrderedHashMap<u64, SelectionItem>> {
+    pub fn load_selection_data(
+        &self,
+    ) -> Result<(OrderedHashMap<u64, SelectionItem>, SelectionMetadata)> {
         if !self.file_path.exists() {
             info!("no persisted selection items file presented, skip loading");
-            return Ok(OrderedHashMap::new());
+            return Ok((OrderedHashMap::new(), SelectionMetadata::default()));
         }
 
         info!("loading selection items from {:?}", self.file_path);
         let data = fs::read(&self.file_path)?;
 
-        let items: OrderedHashMap<u64, SelectionItem> =
+        let items: (OrderedHashMap<u64, SelectionItem>, SelectionMetadata) =
             match bincode::decode_from_slice(&data, BINCODE_CONFIG) {
                 Ok((items, _)) => items,
                 Err(err) => {
                     debug!("decoding failed, trying to decode using old format");
                     match bincode::decode_from_slice(&data, BINCODE_CONFIG) {
                         // TODO: remove support for old format
-                        Ok((items, _)) => convert_to_new_format(items),
+                        Ok((items, _)) => {
+                            (convert_to_new_format(items), SelectionMetadata::default())
+                        }
                         Err(old_format_err) => {
                             debug!("decoding using old format failed: {old_format_err}");
                             return Err(err.into());
@@ -58,7 +66,7 @@ impl Persistence {
                 }
             };
 
-        info!("{} items loaded", items.len());
+        info!("{} items loaded", items.0.len());
         Ok(items)
     }
 }

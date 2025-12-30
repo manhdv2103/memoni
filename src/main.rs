@@ -210,7 +210,7 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
 
     let persistence = Persistence::new(args.selection)?;
     let mut selection = Selection::new(
-        persistence.load_selection_items()?,
+        persistence.load_selection_data()?,
         &window,
         &key_converter,
         args.selection,
@@ -369,7 +369,7 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
                         ui.build_button_widget(new_item)?;
                     }
 
-                    persistence.save_selection_items(&selection.items)?;
+                    persistence.save_selection_data(&selection.items, &selection.metadata)?;
                 }
             }
 
@@ -379,7 +379,7 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
                 ui.reset();
                 active_id = selection
                     .items
-                    .get_by_index(0)
+                    .get_by_index(selection.metadata.pinned_count)
                     .map(|(id, _)| *id)
                     .unwrap_or(0);
             }
@@ -396,12 +396,23 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
                         }
                         Action::Scroll(scroll_action) => scroll_actions.push(scroll_action),
                         Action::Remove => {
-                            info!("deleting selection item {active_id}");
                             let removed_item = selection.items.remove(&active_id);
                             if let Some(item) = removed_item {
                                 ui.remove_button_widgets(std::iter::once(item));
                             }
-                            persistence.save_selection_items(&selection.items)?;
+                            info!("selection item {active_id} removed");
+                            persistence
+                                .save_selection_data(&selection.items, &selection.metadata)?;
+                        }
+                        Action::Pin => {
+                            let is_pinned = selection.toggle_pin(active_id)?;
+                            if is_pinned {
+                                info!("selection item {active_id} pinned");
+                            } else {
+                                info!("selection item {active_id} unpinned");
+                            }
+                            persistence
+                                .save_selection_data(&selection.items, &selection.metadata)?;
                         }
                         Action::HideWindow => {
                             info!("received HideWindow key action, hiding window");
@@ -419,6 +430,7 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
                     input.egui_input.take(),
                     &mut active_id,
                     &selection.items,
+                    &selection.metadata,
                     ui_flow,
                     &scroll_actions,
                     &key_action.pending_keys,

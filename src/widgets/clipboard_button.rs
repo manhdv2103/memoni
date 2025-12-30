@@ -15,6 +15,9 @@ pub struct ClipboardButton {
     is_active: bool,
     with_preview_padding: Option<Vec2>,
     underline_offset: f32,
+    is_pinned: bool,
+    pin_size: f32,
+    pin_color: Color32,
 }
 
 impl ClipboardButton {
@@ -69,6 +72,24 @@ impl ClipboardButton {
     #[inline]
     pub fn underline_offset(mut self, underline_offset: f32) -> Self {
         self.underline_offset = underline_offset;
+        self
+    }
+
+    #[inline]
+    pub fn is_pinned(mut self, is_pinned: bool) -> Self {
+        self.is_pinned = is_pinned;
+        self
+    }
+
+    #[inline]
+    pub fn pin_size(mut self, pin_size: f32) -> Self {
+        self.pin_size = pin_size;
+        self
+    }
+
+    #[inline]
+    pub fn pin_color(mut self, pin_color: impl Into<Color32>) -> Self {
+        self.pin_color = pin_color.into();
         self
     }
 }
@@ -201,6 +222,12 @@ impl Widget for ClipboardButton {
                 let text_pos =
                     Pos2::new(cursor_x, rect.shrink2(padding).bottom() - galley.size().y);
                 ui.painter().galley(text_pos, galley, visuals.text_color());
+            }
+
+            if self.is_pinned {
+                let pin_center = rect.min + Vec2::splat(self.pin_size / 2.0);
+                ui.painter()
+                    .circle_filled(pin_center, self.pin_size, self.pin_color);
             }
         }
 
