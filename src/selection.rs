@@ -32,6 +32,7 @@ use xkeysym::Keysym;
 
 use crate::{
     config::{Config, KeyStroke, Modifier},
+    keymap_action::PasteModifier,
     ordered_hash_map::OrderedHashMap,
     transfer_window_pool::{TransferWindow, TransferWindowPool},
     utils::{image_mime_score, is_image_mime, is_plaintext_mime, plaintext_mime_score},
@@ -112,6 +113,7 @@ enum IncrPasteTaskState {
         item_id: u64,
         data_atom_name: String,
         offset: usize,
+        modifier: Option<PasteModifier>,
     },
 }
 
@@ -153,6 +155,7 @@ pub struct Selection<'a> {
     transfer_windows: TransferWindowPool<'a>,
     mime_atoms: RefCell<HashMap<String, Atom>>,
     paste_item_id: Option<u64>,
+    next_paste_modifier: Option<PasteModifier>,
     prev_item_metadata: Option<(u32, Instant, bool)>,
 }
 
@@ -200,6 +203,7 @@ impl<'a> Selection<'a> {
             transfer_windows: TransferWindowPool::new(conn, root)?,
             mime_atoms: RefCell::new(HashMap::new()),
             paste_item_id: None,
+            next_paste_modifier: None,
             prev_item_metadata: None,
         })
     }
@@ -502,6 +506,9 @@ impl<'a> Selection<'a> {
                         ev.requestor, ev.target
                     );
 
+                    let modifier = self.next_paste_modifier;
+                    self.next_paste_modifier = None;
+
                     let reply = |property| -> Result<()> {
                         conn.send_event(
                             false,
@@ -581,7 +588,8 @@ impl<'a> Selection<'a> {
                             AtomEnum::ATOM,
                             &supported_atoms,
                         )?
-                        .check()?;
+                            .check()?;
+                        self.next_paste_modifier = modifier; // keep the modifier for the next real target
                         break 'blk reply(property)?;
                     }
 
@@ -618,6 +626,7 @@ impl<'a> Selection<'a> {
                                     item_id,
                                     data_atom_name: atom_name.to_string(),
                                     offset: 0,
+                                    modifier,
                                 },
                                 (),
                             ),
@@ -639,6 +648,17 @@ impl<'a> Selection<'a> {
                     )?
                     .check()?;
                     reply(property)?;
+
+                    if modifier.is_some_and(|m| m.and_enter) {
+                        let (key, _, keycode) =
+                            get_input_utils(conn, self.screen, self.key_converter);
+
+                        // Release previously pressed Enter key if it's mapped as paste action
+                        key(KEY_RELEASE_EVENT, keycode(Keysym::Return)?)?;
+
+                        key(KEY_PRESS_EVENT, keycode(Keysym::Return)?)?;
+                        key(KEY_RELEASE_EVENT, keycode(Keysym::Return)?)?;
+                    }
                 }
 
                 // Handle INCR paste request
@@ -659,6 +679,7 @@ impl<'a> Selection<'a> {
                             item_id,
                             ref data_atom_name,
                             ref mut offset,
+                            modifier,
                         } => {
                             let end_transfering =
                                 |incr_paste_tasks: &mut HashMap<_, _>| -> Result<()> {
@@ -685,6 +706,17 @@ impl<'a> Selection<'a> {
                                         ev.window, item_id
                                     );
                                     end_transfering(&mut self.incr_paste_tasks)?;
+
+                                    if modifier.is_some_and(|m| m.and_enter) {
+                                        let (key, _, keycode) =
+                                            get_input_utils(conn, self.screen, self.key_converter);
+
+                                        // Release previously pressed Enter key if it's mapped as paste action
+                                        key(KEY_RELEASE_EVENT, keycode(Keysym::Return)?)?;
+
+                                        key(KEY_PRESS_EVENT, keycode(Keysym::Return)?)?;
+                                        key(KEY_RELEASE_EVENT, keycode(Keysym::Return)?)?;
+                                    }
                                 } else {
                                     debug!(
                                         "continuing INCR transfer with {} bytes remaining",
@@ -895,7 +927,12 @@ impl<'a> Selection<'a> {
         }
     }
 
-    pub fn paste(&mut self, item_id: u64, pointer_original_pos: (i16, i16)) -> Result<()> {
+    pub fn paste(
+        &mut self,
+        item_id: u64,
+        pointer_original_pos: (i16, i16),
+        modifier: PasteModifier,
+    ) -> Result<()> {
         // Move paste item to the top
         let Some(item) = self.items.remove(&item_id) else {
             bail!("item not found: {item_id}");
@@ -914,32 +951,7 @@ impl<'a> Selection<'a> {
         conn.set_selection_owner(paste_window, self.selection_atom, x11rb::CURRENT_TIME)?
             .check()?;
 
-        let key = |type_, code| {
-            conn.xtest_fake_input(type_, code, x11rb::CURRENT_TIME, self.screen.root, 1, 1, 0)
-        };
-        let move_pointer = |x, y| {
-            conn.xtest_fake_input(
-                MOTION_NOTIFY_EVENT,
-                0,
-                x11rb::CURRENT_TIME,
-                self.screen.root,
-                x,
-                y,
-                0,
-            )
-        };
-        let keycode = |keysym| {
-            self.key_converter
-                .keysym_to_keycode(keysym)
-                .map(|kc| kc.raw() as u8)
-                .ok_or_else(|| {
-                    anyhow!(
-                        "invalid key provided: {}",
-                        keysym.name().unwrap_or(&format!("<code {}>", keysym.raw()))
-                    )
-                })
-        };
-
+        let (key, move_pointer, keycode) = get_input_utils(conn, self.screen, self.key_converter);
         if self.selection_atom == self.atoms.CLIPBOARD {
             let app_paste_keymaps = &self.config.app_paste_keymaps;
             let keymap = if let Some((instance_name, class_name)) =
@@ -983,6 +995,7 @@ impl<'a> Selection<'a> {
         conn.flush()?;
 
         self.paste_item_id = Some(item_id);
+        self.next_paste_modifier = Some(modifier);
 
         Ok(())
     }
@@ -1098,4 +1111,44 @@ fn hash_selection_data(data: &SelectionData) -> Result<u64> {
 // Dumb algorithm here is fine I guess
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {
     haystack.windows(needle.len()).any(|w| w == needle)
+}
+
+fn get_input_utils(
+    conn: &XCBConnection,
+    screen: &Screen,
+    key_converter: &X11KeyConverter,
+) -> (
+    impl Fn(u8, u8) -> Result<()>,
+    impl Fn(i16, i16) -> Result<()>,
+    impl Fn(Keysym) -> Result<u8>,
+) {
+    let key = |type_, code| {
+        conn.xtest_fake_input(type_, code, x11rb::CURRENT_TIME, screen.root, 1, 1, 0)?;
+        Ok(())
+    };
+    let move_pointer = |x, y| {
+        conn.xtest_fake_input(
+            MOTION_NOTIFY_EVENT,
+            0,
+            x11rb::CURRENT_TIME,
+            screen.root,
+            x,
+            y,
+            0,
+        )?;
+        Ok(())
+    };
+    let keycode = |keysym| {
+        key_converter
+            .keysym_to_keycode(keysym)
+            .map(|kc| kc.raw() as u8)
+            .ok_or_else(|| {
+                anyhow!(
+                    "invalid key provided: {}",
+                    keysym.name().unwrap_or(&format!("<code {}>", keysym.raw()))
+                )
+            })
+    };
+
+    (key, move_pointer, keycode)
 }

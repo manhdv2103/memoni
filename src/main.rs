@@ -3,7 +3,7 @@ use env_logger::TimestampPrecision;
 use log::{LevelFilter, debug, info, warn};
 use memoni::config::Config;
 use memoni::input::Input;
-use memoni::keymap_action::{KeyAction, KeymapAction, PointerAction};
+use memoni::keymap_action::{KeyAction, KeymapAction, PasteModifier, PointerAction};
 use memoni::persistence::Persistence;
 use memoni::selection::Selection;
 use memoni::ui::{Ui, UiFlow};
@@ -256,6 +256,7 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
             let mut will_show_window = false;
             let mut will_hide_window = false;
             let mut paste_item_id = None;
+            let mut paste_modifier = PasteModifier::default();
 
             // non-blocking when window is visible, blocking otherwise
             let poll_timeout = if window_shown {
@@ -390,10 +391,11 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
                 let mut scroll_actions = vec![];
                 for action in key_actions {
                     match action {
-                        KeyAction::Paste => {
+                        KeyAction::Paste(modifier) => {
                             info!("paste item {active_id} selected by key action, hiding window");
                             will_hide_window = true;
                             paste_item_id = Some(active_id);
+                            paste_modifier = modifier;
                         }
                         KeyAction::Scroll(scroll_action) => scroll_actions.push(scroll_action),
                         KeyAction::Remove => {
@@ -449,10 +451,11 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
                 if let Some(clicked_id) = clicked_item {
                     for action in pointer_actions {
                         match action {
-                            PointerAction::Paste => {
+                            PointerAction::Paste(modifier) => {
                                 info!("paste item {clicked_id} selected by pointer, hiding window");
                                 will_hide_window = true;
                                 paste_item_id = Some(clicked_id);
+                                paste_modifier = modifier;
                             }
                         }
                     }
@@ -482,7 +485,7 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
             }
 
             if let Some(id) = paste_item_id {
-                selection.paste(id, window.win_opened_pointer_pos.get())?;
+                selection.paste(id, window.win_opened_pointer_pos.get(), paste_modifier)?;
             }
         }
         Ok(())
