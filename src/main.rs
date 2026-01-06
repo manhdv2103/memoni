@@ -3,7 +3,7 @@ use env_logger::TimestampPrecision;
 use log::{LevelFilter, debug, info, warn};
 use memoni::config::Config;
 use memoni::input::Input;
-use memoni::key_action::{Action, KeyAction};
+use memoni::keymap_action::{KeyAction, KeymapAction, PointerAction};
 use memoni::persistence::Persistence;
 use memoni::selection::Selection;
 use memoni::ui::{Ui, UiFlow};
@@ -206,7 +206,7 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
     let mut gl_context = OpenGLContext::new(&window, &config)?;
     let key_converter = X11KeyConverter::new(&window.conn)?;
     let mut input = Input::new(&window, &key_converter)?;
-    let mut key_action = KeyAction::new()?;
+    let mut keymap_action = KeymapAction::new()?;
 
     let persistence = Persistence::new(args.selection)?;
     let mut selection = Selection::new(
@@ -385,17 +385,18 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
             }
 
             if window_shown || will_show_window {
-                let actions = key_action.process_input(&mut input.egui_input);
+                let (key_actions, pointer_actions) =
+                    keymap_action.process_input(&mut input.egui_input);
                 let mut scroll_actions = vec![];
-                for action in actions {
+                for action in key_actions {
                     match action {
-                        Action::Paste => {
+                        KeyAction::Paste => {
                             info!("paste item {active_id} selected by key action, hiding window");
                             will_hide_window = true;
                             paste_item_id = Some(active_id);
                         }
-                        Action::Scroll(scroll_action) => scroll_actions.push(scroll_action),
-                        Action::Remove => {
+                        KeyAction::Scroll(scroll_action) => scroll_actions.push(scroll_action),
+                        KeyAction::Remove => {
                             let removed_item = selection.items.remove(&active_id);
                             if let Some(item) = removed_item {
                                 ui.remove_button_widgets(std::iter::once(item));
@@ -404,7 +405,7 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
                             persistence
                                 .save_selection_data(&selection.items, &selection.metadata)?;
                         }
-                        Action::Pin => {
+                        KeyAction::Pin => {
                             let is_pinned = selection.toggle_pin(active_id)?;
                             if is_pinned {
                                 info!("selection item {active_id} pinned");
@@ -414,11 +415,11 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
                             persistence
                                 .save_selection_data(&selection.items, &selection.metadata)?;
                         }
-                        Action::HideWindow => {
+                        KeyAction::HideWindow => {
                             info!("received HideWindow key action, hiding window");
                             will_hide_window = true;
                         }
-                        Action::QuickPaste(index) => {
+                        KeyAction::QuickPaste(index) => {
                             if let Some((&id, _)) = selection.items.get_by_index(index) {
                                 info!(
                                     "quickpaste item {id} (index {index}) selected by key action, hiding window"
@@ -435,23 +436,30 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
                 } else {
                     UiFlow::TopToBottom
                 };
-                let full_output = ui.run(
+                let (full_output, clicked_item) = ui.run(
                     input.egui_input.take(),
                     &mut active_id,
                     &selection.items,
                     &selection.metadata,
                     ui_flow,
                     &scroll_actions,
-                    &key_action.pending_keys,
-                    |selected| {
-                        info!(
-                            "paste item {} selected by pointer, hiding window",
-                            selected.id
-                        );
-                        will_hide_window = true;
-                        paste_item_id = Some(selected.id);
-                    },
+                    &keymap_action.pending_keys,
                 )?;
+
+                if let Some(clicked_id) = clicked_item {
+                    for action in pointer_actions {
+                        match action {
+                            PointerAction::Paste => {
+                                info!("paste item {clicked_id} selected by pointer, hiding window");
+                                will_hide_window = true;
+                                paste_item_id = Some(clicked_id);
+                            }
+                        }
+                    }
+                } else if !pointer_actions.is_empty() {
+                    debug!("pointer actions received when no items getting clicked");
+                }
+
                 gl_context.render(&ui.egui_ctx, full_output)?;
             }
 

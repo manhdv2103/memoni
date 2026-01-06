@@ -21,7 +21,7 @@ use xdg_mime::SharedMimeInfo;
 use crate::{
     config::{Config, Dimensions, LayoutConfig},
     freedesktop_cache::get_cached_thumbnail,
-    key_action::{KeyChord, ScrollAction},
+    keymap_action::{KeyChord, ScrollAction},
     ordered_hash_map::OrderedHashMap,
     selection::{SelectionItem, SelectionMetadata},
     utils::{is_image_mime, is_plaintext_mime, percent_decode, utf16le_to_string},
@@ -260,8 +260,7 @@ impl<'a> Ui<'a> {
         flow: UiFlow,
         scroll_actions: &[ScrollAction],
         pending_keys: &[KeyChord],
-        mut on_paste: impl FnMut(&SelectionItem),
-    ) -> Result<FullOutput> {
+    ) -> Result<(FullOutput, Option<u64>)> {
         trace!("painting ui with flow {flow:?}");
         let mut run_error = None;
         let layout = &self.config.layout;
@@ -336,8 +335,12 @@ impl<'a> Ui<'a> {
 
         for ev in &egui_input.events {
             if !self.is_initial_run
-                && (matches!(ev, egui::Event::PointerMoved(_))
-                    || matches!(ev, egui::Event::MouseWheel { .. }))
+                && (matches!(
+                    ev,
+                    egui::Event::PointerMoved(_)
+                        | egui::Event::MouseWheel { .. }
+                        | egui::Event::PointerButton { .. }
+                ))
             {
                 self.active_source = Some(ActiveSource::Hovering);
             }
@@ -372,6 +375,7 @@ impl<'a> Ui<'a> {
             );
         }
 
+        let mut clicked_item = None;
         let full_output = self.egui_ctx.run(egui_input, |ctx| {
             // Pick new active item if the current one got removed
             if !ctx.will_discard() && active_item_removed {
@@ -570,15 +574,20 @@ impl<'a> Ui<'a> {
 
                         self.item_widget_ids.insert(id, btn.id);
                         content_sizes.insert(item.id, btn.rect);
-
-                        if btn.clicked() {
-                            on_paste(item);
-                        }
                     }
 
                     Ok(())
                 },
             );
+
+            clicked_item = ctx.viewport(|vp| {
+                vp.interact_widgets.clicked.and_then(|id| {
+                    self.item_widget_ids
+                        .iter()
+                        .find(|&(_, &widget_id)| widget_id == id)
+                        .map(|(&id, _)| id)
+                })
+            });
 
             match container_result {
                 Ok(scroll_area_output) => {
@@ -597,7 +606,7 @@ impl<'a> Ui<'a> {
         self.prev_active_idx = active_idx;
 
         match run_error {
-            None => Ok(full_output),
+            None => Ok((full_output, clicked_item)),
             Some(err) => Err(err),
         }
     }
