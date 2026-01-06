@@ -603,7 +603,10 @@ impl<'a> Ui<'a> {
 
         self.is_initial_run = false;
         self.prev_active_id = *active_id;
-        self.prev_active_idx = active_idx;
+        self.prev_active_idx = selection_items
+            .iter()
+            .position(|(id, _)| *id == *active_id)
+            .unwrap_or(0);
 
         match run_error {
             None => Ok((full_output, clicked_item)),
