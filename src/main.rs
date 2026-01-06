@@ -1,4 +1,5 @@
 use anyhow::{Result, anyhow, bail};
+use egui::Modifiers;
 use env_logger::TimestampPrecision;
 use log::{LevelFilter, debug, info, warn};
 use memoni::config::Config;
@@ -481,6 +482,7 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
                 window.disable_events()?;
                 window.conn.flush()?;
                 window_shown = false;
+                input.egui_input.modifiers = Modifiers::NONE;
                 info!("window hidden");
             }
 
