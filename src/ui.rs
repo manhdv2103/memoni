@@ -555,16 +555,18 @@ impl<'a> Ui<'a> {
                         let is_active = id == *active_id;
                         let is_pinned = i < selection_metadata.pinned_count;
 
-                        let btn = ui.add(
-                            self.button_widgets
-                                .get(&item.id)
-                                .ok_or_else(|| {
-                                    anyhow!("missing button widget for item {}", item.id)
-                                })?
-                                .clone()
-                                .is_active(is_active)
-                                .is_pinned(is_pinned),
-                        );
+                        let mut btn_widget = self
+                            .button_widgets
+                            .get(&item.id)
+                            .ok_or_else(|| anyhow!("missing button widget for item {}", item.id))?
+                            .clone()
+                            .is_active(is_active)
+                            .is_pinned(is_pinned);
+                        if self.config.show_quick_paste_hint && i < 10 {
+                            btn_widget = btn_widget.keyboard_hint(((i + 1) % 10).to_string());
+                        }
+
+                        let btn = ui.add(btn_widget);
 
                         self.item_widget_ids.insert(id, btn.id);
                         content_sizes.insert(item.id, btn.rect);
@@ -807,6 +809,7 @@ impl<'a> Ui<'a> {
         }
 
         let mut btn = ClipboardButton::default()
+            .secondary_foreground(config.theme.muted_foreground)
             .underline_offset(config.font.underline_offset)
             .with_preview_padding(config.layout.button_with_preview_padding)
             .pin_size(config.layout.pin_size)
@@ -844,9 +847,7 @@ impl<'a> Ui<'a> {
 
             if !sublabel_text.is_empty() {
                 btn = btn.sublabel(
-                    RichText::new(sublabel_text.to_uppercase())
-                        .size(config.font.secondary_size)
-                        .color(config.theme.muted_foreground),
+                    RichText::new(sublabel_text.to_uppercase()).size(config.font.secondary_size),
                 )
             }
 
@@ -873,11 +874,7 @@ impl<'a> Ui<'a> {
 
             btn = btn
                 .preview(texture, config.layout.preview_size)
-                .sublabel(
-                    RichText::new(sublabel_text)
-                        .size(config.font.secondary_size)
-                        .color(config.theme.muted_foreground),
-                )
+                .sublabel(RichText::new(sublabel_text).size(config.font.secondary_size))
                 .preview_background(config.theme.preview_background);
 
             if let Some((src, alt)) = img_metadata {

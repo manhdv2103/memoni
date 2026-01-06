@@ -418,6 +418,15 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
                             info!("received HideWindow key action, hiding window");
                             will_hide_window = true;
                         }
+                        Action::QuickPaste(index) => {
+                            if let Some((&id, _)) = selection.items.get_by_index(index) {
+                                info!(
+                                    "quickpaste item {id} (index {index}) selected by key action, hiding window"
+                                );
+                                will_hide_window = true;
+                                paste_item_id = Some(id);
+                            }
+                        }
                     }
                 }
 

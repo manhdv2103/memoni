@@ -80,6 +80,7 @@ impl ScrollAction {
 #[derive(Debug, Copy, Clone)]
 pub enum Action {
     Paste,
+    QuickPaste(usize),
     Scroll(ScrollAction),
     Remove,
     Pin,
@@ -116,6 +117,17 @@ static ACTION_KEYMAPS: LazyLock<Vec<(Vec<KeyChord>, Action)>> = LazyLock::new(||
 
         (vec![KC::of_key(Enter)]            , Action::Paste),
         (vec![KC::of_key(Space)]            , Action::Paste),
+
+        (vec![KC::of_key(Num1)]             , QuickPaste(0)),
+        (vec![KC::of_key(Num2)]             , QuickPaste(1)),
+        (vec![KC::of_key(Num3)]             , QuickPaste(2)),
+        (vec![KC::of_key(Num4)]             , QuickPaste(3)),
+        (vec![KC::of_key(Num5)]             , QuickPaste(4)),
+        (vec![KC::of_key(Num6)]             , QuickPaste(5)),
+        (vec![KC::of_key(Num7)]             , QuickPaste(6)),
+        (vec![KC::of_key(Num8)]             , QuickPaste(7)),
+        (vec![KC::of_key(Num9)]             , QuickPaste(8)),
+        (vec![KC::of_key(Num0)]             , QuickPaste(9)),
 
         (vec![KC::of_key(D), KC::of_key(D)] , Remove),
         (vec![KC::of_key(Delete)]           , Remove),

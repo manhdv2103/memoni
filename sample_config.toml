@@ -14,6 +14,11 @@ show_ribbon = true
 # default: false
 scroll_bar_auto_hide = true
 
+# Shows quick paste keyboard shortcut hints on buttons
+#
+# default: true
+show_quick_paste_hint = true
+
 
 # Application-specific paste keymaps for CLIPBOARD selection
 #

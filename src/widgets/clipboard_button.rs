@@ -1,6 +1,8 @@
+use std::sync::Arc;
+
 use egui::{
-    Color32, CornerRadius, Image, Pos2, Rect, Response, Sense, Stroke, StrokeKind, TextStyle,
-    TextWrapMode, TextureHandle, Ui, Vec2, Widget, WidgetText,
+    Color32, CornerRadius, Image, Pos2, Rect, Response, RichText, Sense, Stroke, StrokeKind,
+    TextStyle, TextWrapMode, TextureHandle, Ui, Vec2, Widget, WidgetText,
 };
 
 const SUBLABEL_GAP: f32 = 3.0;
@@ -9,6 +11,7 @@ const SUBLABEL_GAP: f32 = 3.0;
 pub struct ClipboardButton {
     labels: Vec<WidgetText>,
     sublabel: Option<WidgetText>,
+    secondary_foreground: Option<Color32>,
     preview: Option<(TextureHandle, Vec2)>,
     preview_source: Option<String>,
     preview_background: Color32,
@@ -18,6 +21,7 @@ pub struct ClipboardButton {
     is_pinned: bool,
     pin_size: f32,
     pin_color: Color32,
+    keyboard_hint: Option<String>,
 }
 
 impl ClipboardButton {
@@ -36,6 +40,12 @@ impl ClipboardButton {
     #[inline]
     pub fn sublabel(mut self, sublabel: impl Into<WidgetText>) -> Self {
         self.sublabel = Some(sublabel.into());
+        self
+    }
+
+    #[inline]
+    pub fn secondary_foreground(mut self, secondary_foreground: impl Into<Color32>) -> Self {
+        self.secondary_foreground = Some(secondary_foreground.into());
         self
     }
 
@@ -92,6 +102,12 @@ impl ClipboardButton {
         self.pin_color = pin_color.into();
         self
     }
+
+    #[inline]
+    pub fn keyboard_hint(mut self, keyboard_hint: impl Into<String>) -> Self {
+        self.keyboard_hint = Some(keyboard_hint.into());
+        self
+    }
 }
 
 impl Widget for ClipboardButton {
@@ -103,13 +119,36 @@ impl Widget for ClipboardButton {
         } else {
             ui.style().spacing.button_padding
         };
+        let right_padding = ui.style().spacing.button_padding.x;
 
         let desired_width = ui.available_width();
 
-        let mut text_width = desired_width - padding.x * 2.0;
+        let mut text_width = desired_width - padding.x - right_padding;
         if let Some((_, img_size)) = self.preview {
             text_width -= img_size.x;
         }
+
+        // TODO: make these configurable?
+        let keyboard_hint_gap = 10.0;
+        let keyboard_hint_size = 12.0;
+        let keyboard_hint_galley = self.keyboard_hint.map(|sh| {
+            WidgetText::RichText(Arc::new(
+                RichText::new(sh)
+                    .size(keyboard_hint_size)
+                    .color(self.secondary_foreground.unwrap_or(Color32::PLACEHOLDER)),
+            ))
+            .into_galley(
+                ui,
+                Some(TextWrapMode::Truncate),
+                desired_width * 0.2,
+                TextStyle::Button,
+            )
+        });
+        text_width -= keyboard_hint_galley
+            .as_ref()
+            .map(|g| g.size().x + keyboard_hint_gap)
+            .unwrap_or(0.0);
+
         let galleys = self
             .labels
             .into_iter()
@@ -123,12 +162,13 @@ impl Widget for ClipboardButton {
             })
             .collect::<Vec<_>>();
         let sublabel_galley = self.sublabel.map(|sl| {
-            sl.into_galley(
-                ui,
-                Some(TextWrapMode::Truncate),
-                text_width,
-                TextStyle::Button,
-            )
+            sl.color(self.secondary_foreground.unwrap_or(Color32::PLACEHOLDER))
+                .into_galley(
+                    ui,
+                    Some(TextWrapMode::Truncate),
+                    text_width,
+                    TextStyle::Button,
+                )
         });
         let img_src_galley = if self.preview.is_some() {
             self.preview_source.as_ref().map(|s| {
@@ -187,6 +227,7 @@ impl Widget for ClipboardButton {
 
                 preview.paint_at(ui, preview_rect);
 
+                assert!(preview_rect.width() == size.x);
                 cursor_x += preview_rect.width();
             }
 
@@ -221,7 +262,21 @@ impl Widget for ClipboardButton {
             if let Some(galley) = sublabel_galley {
                 let text_pos =
                     Pos2::new(cursor_x, rect.shrink2(padding).bottom() - galley.size().y);
-                ui.painter().galley(text_pos, galley, visuals.text_color());
+                ui.painter().galley(
+                    text_pos,
+                    galley,
+                    self.secondary_foreground.unwrap_or(visuals.text_color()),
+                );
+            }
+
+            if let Some(galley) = keyboard_hint_galley {
+                cursor_x += text_width + keyboard_hint_gap;
+                let text_pos = Pos2::new(cursor_x, rect.center().y - galley.rect.height() / 2.0);
+                ui.painter().galley(
+                    text_pos,
+                    galley,
+                    self.secondary_foreground.unwrap_or(visuals.text_color()),
+                );
             }
 
             if self.is_pinned {
