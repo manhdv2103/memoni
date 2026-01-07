@@ -115,6 +115,7 @@ impl ScrollAction {
 
 #[derive(Debug, Default, Copy, Clone)]
 pub struct PasteModifier {
+    pub trim: bool,
     pub and_enter: bool,
 }
 
@@ -149,53 +150,61 @@ static ACTION_KEYMAPS: LazyLock<Vec<(Vec<KeyChord>, Action)>> = LazyLock::new(||
     use KeyChord as KC;
     use Modifiers as M;
     vec![
-        (vec![KC::of_key(ArrowUp)]                    , AK(Scroll(ScrollAction::ItemUp))),
-        (vec![KC::of_key(ArrowDown)]                  , AK(Scroll(ScrollAction::ItemDown))),
+        (vec![KC::of_key(ArrowUp)]                                , AK(Scroll(ScrollAction::ItemUp))),
+        (vec![KC::of_key(ArrowDown)]                              , AK(Scroll(ScrollAction::ItemDown))),
 
-        (vec![KC::of_key(K)]                          , AK(Scroll(ScrollAction::ItemUp))),
-        (vec![KC::of_key(J)]                          , AK(Scroll(ScrollAction::ItemDown))),
+        (vec![KC::of_key(K)]                                      , AK(Scroll(ScrollAction::ItemUp))),
+        (vec![KC::of_key(J)]                                      , AK(Scroll(ScrollAction::ItemDown))),
 
-        (vec![KC::of_key_chord(P, M::CTRL)]           , AK(Scroll(ScrollAction::ItemUp))),
-        (vec![KC::of_key_chord(N, M::CTRL)]           , AK(Scroll(ScrollAction::ItemDown))),
+        (vec![KC::of_key_chord(P, M::CTRL)]                       , AK(Scroll(ScrollAction::ItemUp))),
+        (vec![KC::of_key_chord(N, M::CTRL)]                       , AK(Scroll(ScrollAction::ItemDown))),
 
-        (vec![KC::of_key_chord(Tab, M::SHIFT)]        , AK(Scroll(ScrollAction::ItemUp))),
-        (vec![KC::of_key(Tab)]                        , AK(Scroll(ScrollAction::ItemDown))),
+        (vec![KC::of_key_chord(Tab, M::SHIFT)]                    , AK(Scroll(ScrollAction::ItemUp))),
+        (vec![KC::of_key(Tab)]                                    , AK(Scroll(ScrollAction::ItemDown))),
 
-        (vec![KC::of_key_chord(U, M::CTRL)]           , AK(Scroll(ScrollAction::HalfUp))),
-        (vec![KC::of_key_chord(D, M::CTRL)]           , AK(Scroll(ScrollAction::HalfDown))),
+        (vec![KC::of_key_chord(U, M::CTRL)]                       , AK(Scroll(ScrollAction::HalfUp))),
+        (vec![KC::of_key_chord(D, M::CTRL)]                       , AK(Scroll(ScrollAction::HalfDown))),
 
-        (vec![KC::of_key_chord(B, M::CTRL)]           , AK(Scroll(ScrollAction::PageUp))),
-        (vec![KC::of_key_chord(F, M::CTRL)]           , AK(Scroll(ScrollAction::PageDown))),
+        (vec![KC::of_key_chord(B, M::CTRL)]                       , AK(Scroll(ScrollAction::PageUp))),
+        (vec![KC::of_key_chord(F, M::CTRL)]                       , AK(Scroll(ScrollAction::PageDown))),
 
-        (vec![KC::of_key(G), KC::of_key(G)]           , AK(Scroll(ScrollAction::ToTop))),
-        (vec![KC::of_key_chord(G, M::SHIFT)]          , AK(Scroll(ScrollAction::ToBottom))),
+        (vec![KC::of_key(G), KC::of_key(G)]                       , AK(Scroll(ScrollAction::ToTop))),
+        (vec![KC::of_key_chord(G, M::SHIFT)]                      , AK(Scroll(ScrollAction::ToBottom))),
 
-        (vec![KC::of_key(Enter)]                      , AK(KeyAction::Paste(PasteModifier::default()))),
-        (vec![KC::of_key(Space)]                      , AK(KeyAction::Paste(PasteModifier::default()))),
-        (vec![KC::of_ptr_btn(Primary)]                , AP(PointerAction::Paste(PasteModifier::default()))),
+        (vec![KC::of_key(Enter)]                                  , AK(KeyAction::Paste(PasteModifier::default()))),
+        (vec![KC::of_key(Space)]                                  , AK(KeyAction::Paste(PasteModifier::default()))),
+        (vec![KC::of_ptr_btn(Primary)]                            , AP(PointerAction::Paste(PasteModifier::default()))),
 
-        (vec![KC::of_key_chord(Enter, M::CTRL)]       , AK(KeyAction::Paste(PasteModifier { and_enter: true }))),
-        (vec![KC::of_key_chord(Space, M::CTRL)]       , AK(KeyAction::Paste(PasteModifier { and_enter: true }))),
-        (vec![KC::of_ptr_btn_chord(Primary, M::CTRL)] , AP(PointerAction::Paste(PasteModifier { and_enter: true }))),
+        (vec![KC::of_key_chord(Enter, M::CTRL)]                   , AK(KeyAction::Paste(PasteModifier { and_enter: true, trim: false }))),
+        (vec![KC::of_key_chord(Space, M::CTRL)]                   , AK(KeyAction::Paste(PasteModifier { and_enter: true, trim: false }))),
+        (vec![KC::of_ptr_btn_chord(Primary, M::CTRL)]             , AP(PointerAction::Paste(PasteModifier { and_enter: true, trim: false }))),
 
-        (vec![KC::of_key(Num1)]                       , AK(QuickPaste(0))),
-        (vec![KC::of_key(Num2)]                       , AK(QuickPaste(1))),
-        (vec![KC::of_key(Num3)]                       , AK(QuickPaste(2))),
-        (vec![KC::of_key(Num4)]                       , AK(QuickPaste(3))),
-        (vec![KC::of_key(Num5)]                       , AK(QuickPaste(4))),
-        (vec![KC::of_key(Num6)]                       , AK(QuickPaste(5))),
-        (vec![KC::of_key(Num7)]                       , AK(QuickPaste(6))),
-        (vec![KC::of_key(Num8)]                       , AK(QuickPaste(7))),
-        (vec![KC::of_key(Num9)]                       , AK(QuickPaste(8))),
-        (vec![KC::of_key(Num0)]                       , AK(QuickPaste(9))),
+        (vec![KC::of_key_chord(Enter, M::SHIFT)]                  , AK(KeyAction::Paste(PasteModifier { trim: true, and_enter: false }))),
+        (vec![KC::of_key_chord(Space, M::SHIFT)]                  , AK(KeyAction::Paste(PasteModifier { trim: true, and_enter: false }))),
+        (vec![KC::of_ptr_btn_chord(Primary, M::SHIFT)]            , AP(PointerAction::Paste(PasteModifier { trim: true, and_enter: false }))),
 
-        (vec![KC::of_key(D), KC::of_key(D)]           , AK(Remove)),
-        (vec![KC::of_key(Delete)]                     , AK(Remove)),
+        (vec![KC::of_key_chord(Enter, M::SHIFT | M::CTRL)]        , AK(KeyAction::Paste(PasteModifier { trim: true, and_enter: true }))),
+        (vec![KC::of_key_chord(Space, M::SHIFT | M::CTRL)]        , AK(KeyAction::Paste(PasteModifier { trim: true, and_enter: true }))),
+        (vec![KC::of_ptr_btn_chord(Primary, M::SHIFT | M::CTRL)]  , AP(PointerAction::Paste(PasteModifier { trim: true, and_enter: true }))),
 
-        (vec![KC::of_key(P)]                          , AK(Pin)),
+        (vec![KC::of_key(Num1)]                                   , AK(QuickPaste(0))),
+        (vec![KC::of_key(Num2)]                                   , AK(QuickPaste(1))),
+        (vec![KC::of_key(Num3)]                                   , AK(QuickPaste(2))),
+        (vec![KC::of_key(Num4)]                                   , AK(QuickPaste(3))),
+        (vec![KC::of_key(Num5)]                                   , AK(QuickPaste(4))),
+        (vec![KC::of_key(Num6)]                                   , AK(QuickPaste(5))),
+        (vec![KC::of_key(Num7)]                                   , AK(QuickPaste(6))),
+        (vec![KC::of_key(Num8)]                                   , AK(QuickPaste(7))),
+        (vec![KC::of_key(Num9)]                                   , AK(QuickPaste(8))),
+        (vec![KC::of_key(Num0)]                                   , AK(QuickPaste(9))),
 
-        (vec![KC::of_key(Escape)]                     , AK(HideWindow)),
-        (vec![KC::of_key(Q)]                          , AK(HideWindow)),
+        (vec![KC::of_key(D), KC::of_key(D)]                       , AK(Remove)),
+        (vec![KC::of_key(Delete)]                                 , AK(Remove)),
+
+        (vec![KC::of_key(P)]                                      , AK(Pin)),
+
+        (vec![KC::of_key(Escape)]                                 , AK(HideWindow)),
+        (vec![KC::of_key(Q)]                                      , AK(HideWindow)),
     ]
 });
 

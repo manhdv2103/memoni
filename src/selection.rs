@@ -588,7 +588,7 @@ impl<'a> Selection<'a> {
                             AtomEnum::ATOM,
                             &supported_atoms,
                         )?
-                            .check()?;
+                        .check()?;
                         self.next_paste_modifier = modifier; // keep the modifier for the next real target
                         break 'blk reply(property)?;
                     }
@@ -598,7 +598,17 @@ impl<'a> Selection<'a> {
                         ev.requestor, property
                     );
 
-                    let (data, atom_name) = requested_data.unwrap();
+                    let (raw_data, atom_name) = requested_data.unwrap();
+                    let data = if modifier.is_some_and(|m| m.trim) {
+                        if is_plaintext_mime(atom_name) {
+                            trim_unicode_utf8(raw_data).unwrap()
+                        } else {
+                            debug!("trim-pasting on a non-text item");
+                            raw_data
+                        }
+                    } else {
+                        raw_data
+                    };
                     if data.len() > INCR_CHUNK_SIZE {
                         debug!(
                             "starting paste request INCR transfer for {} bytes",
@@ -1111,6 +1121,16 @@ fn hash_selection_data(data: &SelectionData) -> Result<u64> {
 // Dumb algorithm here is fine I guess
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {
     haystack.windows(needle.len()).any(|w| w == needle)
+}
+
+fn trim_unicode_utf8(bytes: &[u8]) -> Result<&[u8]> {
+    let s = str::from_utf8(bytes)?;
+    let trimmed = s.trim();
+
+    let start = trimmed.as_ptr() as usize - bytes.as_ptr() as usize;
+    let end = start + trimmed.len();
+
+    Ok(&bytes[start..end])
 }
 
 fn get_input_utils(
