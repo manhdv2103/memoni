@@ -130,7 +130,7 @@ impl Widget for ClipboardButton {
 
         // TODO: make these configurable?
         let keyboard_hint_gap = 10.0;
-        let keyboard_hint_size = 12.0;
+        let keyboard_hint_size = 11.0;
         let keyboard_hint_galley = self.keyboard_hint.map(|sh| {
             WidgetText::RichText(Arc::new(
                 RichText::new(sh)
