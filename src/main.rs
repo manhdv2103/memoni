@@ -199,11 +199,7 @@ fn client(args: ClientArgs, socket_path: &Path) -> Result<()> {
 fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
     let config = Config::load(args.selection)?;
 
-    let window = X11Window::new(
-        &config,
-        args.selection,
-        args.selection == SelectionType::PRIMARY,
-    )?;
+    let window = X11Window::new(&config, args.selection)?;
     let mut gl_context = OpenGLContext::new(&window, &config)?;
     let key_converter = X11KeyConverter::new(&window.conn)?;
     let mut input = Input::new(&window, &key_converter)?;

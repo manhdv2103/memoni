@@ -37,6 +37,7 @@ pub struct Config {
     pub show_ribbon: bool,
     pub scroll_bar_auto_hide: bool,
     pub show_quick_paste_hint: bool,
+    pub window_position_mode: WindowPositionMode,
 
     #[serde_as(as = "HashMap<_, OneOrMany<_>>")]
     pub app_paste_keymaps: HashMap<String, Vec<KeyStroke>>,
@@ -56,6 +57,7 @@ impl Default for Config {
             show_ribbon: false,
             scroll_bar_auto_hide: false,
             show_quick_paste_hint: true,
+            window_position_mode: WindowPositionMode::Monitor,
             app_paste_keymaps: Default::default(),
             layout: Default::default(),
             font: Default::default(),
@@ -202,6 +204,7 @@ fn default_clipboard_config() -> OptionalConfig {
             ribbon: Some(Color(0x550000ff)),
             ..Default::default()
         }),
+        window_position_mode: Some(WindowPositionMode::Monitor),
         ..Default::default()
     }
 }
@@ -212,6 +215,7 @@ fn default_primary_config() -> OptionalConfig {
             ribbon: Some(Color(0x30ff0000)),
             ..Default::default()
         }),
+        window_position_mode: Some(WindowPositionMode::Pointer),
         ..Default::default()
     }
 }
@@ -355,6 +359,14 @@ impl From<Dimensions> for egui::Vec2 {
     fn from(val: Dimensions) -> Self {
         egui::vec2(val.width.into(), val.height.into())
     }
+}
+
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum WindowPositionMode {
+    Monitor,
+    Pointer,
+    Dynamic,
 }
 
 #[derive(Deserialize)]

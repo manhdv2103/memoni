@@ -19,6 +19,15 @@ scroll_bar_auto_hide = true
 # default: true
 show_quick_paste_hint = true
 
+# Window positioning mode
+#
+# "monitor" - Always center window in the focused monitor
+# "pointer" - Always follow the mouse pointer
+# "dynamic" - Follow pointer if it's visible and in the focused monitor; otherwise center in focused monitor
+#
+# default: CLIPBOARD - "monitor", PRIMARY - "pointer"
+window_position_mode = "dynamic"
+
 
 # Application-specific paste keymaps for CLIPBOARD selection
 #
