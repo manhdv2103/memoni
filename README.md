@@ -12,7 +12,7 @@ Memoni (MEMOry MONItor) is a simple X11 clipboard manager for Linux.
 - **Pointer-aware window placement**: window follows the pointer; centers on focused monitor when the pointer is hidden (e.g., typing in the terminal) or on another monitor.
 - **Automatic pasting**: automatically pastes the selected item using Ctrl+V, with the option to customize the paste keymap per application.
 - **Rich previews**: image thumbnails (PNG/JPEG/GIF/SVG) with alt text and source, file icons via freedesktop cache and device's icon theme.
-- **Vim-inspired navigation**: J/K, Ctrl-N/P, Ctrl-U/D, Ctrl-B/F; Enter/Space to paste; Esc to hide.
+- **Vim-inspired keymaps**: J/K, Ctrl-N/P, Ctrl-U/D, Ctrl-B/F, gg, G for navigation; Enter/Space to paste; Esc to hide; press ? for full keymap list.
 - **Capturing everything**: text, images, file references, or anything else you copy; persistently saved across sessions.
 
 ## Building
