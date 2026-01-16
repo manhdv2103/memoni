@@ -944,10 +944,13 @@ impl<'a> Selection<'a> {
         modifier: PasteModifier,
     ) -> Result<()> {
         // Move paste item to the top
-        let Some(item) = self.items.remove(&item_id) else {
+        let Some(item_idx) = self.items.iter().position(|(&id, _)| id == item_id) else {
             bail!("item not found: {item_id}");
         };
-        self.items.insert(self.metadata.pinned_count, item_id, item);
+        if item_idx >= self.metadata.pinned_count {
+            let item = self.items.remove(&item_id).unwrap();
+            self.items.insert(self.metadata.pinned_count, item_id, item);
+        }
 
         let conn = &self.window.conn;
         let paste_window = self.window.win_id.get();
