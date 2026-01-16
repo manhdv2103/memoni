@@ -2,9 +2,12 @@ use anyhow::{Result, anyhow, bail};
 use egui::Modifiers;
 use env_logger::TimestampPrecision;
 use log::{LevelFilter, debug, info, warn};
+use memoni::AppMode;
 use memoni::config::Config;
 use memoni::input::Input;
-use memoni::keymap_action::{KeyAction, KeymapAction, PasteModifier, PointerAction};
+use memoni::keymap_action::{
+    KeyAction, KeymapAction, PasteModifier, PointerAction, SimpleScrollAction,
+};
 use memoni::persistence::Persistence;
 use memoni::selection::Selection;
 use memoni::ui::{Ui, UiFlow};
@@ -247,6 +250,7 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
             .get_by_index(0)
             .map(|(id, _)| *id)
             .unwrap_or(0);
+        let mut mode = AppMode::Normal;
 
         info!("starting main event loop");
         'main_loop: loop {
@@ -372,6 +376,7 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
             }
 
             if will_show_window {
+                mode = AppMode::Normal;
                 window.update_window_pos()?;
                 input.update_pointer_pos()?;
                 ui.reset();
@@ -384,7 +389,7 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
 
             if window_shown || will_show_window {
                 let (key_actions, pointer_actions) =
-                    keymap_action.process_input(&mut input.egui_input);
+                    keymap_action.process_input(&mut input.egui_input, mode);
                 let mut scroll_actions = vec![];
                 for action in key_actions {
                     match action {
@@ -414,10 +419,6 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
                             persistence
                                 .save_selection_data(&selection.items, &selection.metadata)?;
                         }
-                        KeyAction::HideWindow => {
-                            info!("received HideWindow key action, hiding window");
-                            will_hide_window = true;
-                        }
                         KeyAction::QuickPaste(index) => {
                             if let Some((&id, _)) = selection.items.get_by_index(index) {
                                 info!(
@@ -427,6 +428,42 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
                                 paste_item_id = Some(id);
                             }
                         }
+
+                        KeyAction::ShowHelp => {
+                            info!("switching to Help mode");
+                            mode = AppMode::Help;
+                        }
+                        KeyAction::SimpleScroll(direction) => {
+                            let key = match direction {
+                                SimpleScrollAction::Up => egui::Key::ArrowUp,
+                                SimpleScrollAction::Down => egui::Key::ArrowDown,
+                            };
+                            input.egui_input.events.push(egui::Event::Key {
+                                key,
+                                physical_key: None,
+                                pressed: true,
+                                repeat: false,
+                                modifiers: Modifiers::NONE,
+                            });
+                            input.egui_input.events.push(egui::Event::Key {
+                                key,
+                                physical_key: None,
+                                pressed: false,
+                                repeat: false,
+                                modifiers: Modifiers::NONE,
+                            });
+                        }
+
+                        KeyAction::Close => match mode {
+                            AppMode::Normal => {
+                                info!("received Close action in Normal mode, hiding window");
+                                will_hide_window = true;
+                            }
+                            AppMode::Help => {
+                                info!("switching to Normal mode");
+                                mode = AppMode::Normal;
+                            }
+                        },
                     }
                 }
 
@@ -443,6 +480,7 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
                     ui_flow,
                     &scroll_actions,
                     &keymap_action.pending_keys,
+                    mode == AppMode::Help,
                 )?;
 
                 if let Some(clicked_id) = clicked_item {

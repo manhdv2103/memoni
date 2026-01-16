@@ -26,6 +26,7 @@ use crate::{
     selection::{SelectionItem, SelectionMetadata},
     utils::{is_image_mime, is_plaintext_mime, percent_decode, utf16le_to_string},
     widgets::clipboard_button::ClipboardButton,
+    widgets::help_modal::HelpModal,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,6 +96,7 @@ pub struct Ui<'a> {
     active_source: Option<ActiveSource>,
     scroll_area_info: Option<ScrollAreaInfo>,
     is_initial_run: bool,
+    is_initial_help_showing: bool,
     hides_scroll_bar: bool,
     button_widgets: HashMap<u64, ClipboardButton>,
     fallback: Fallback,
@@ -174,6 +176,7 @@ impl<'a> Ui<'a> {
             active_source: None,
             scroll_area_info: None,
             is_initial_run: true,
+            is_initial_help_showing: true,
             hides_scroll_bar: config.scroll_bar_auto_hide,
             button_widgets: HashMap::new(),
             fallback: Fallback {
@@ -206,6 +209,11 @@ impl<'a> Ui<'a> {
             style.spacing.button_padding = layout.button_padding.into();
             style.spacing.item_spacing = egui::vec2(0.0, layout.button_spacing);
             style.interaction.selectable_labels = false;
+
+            style.visuals.window_fill = theme.background.into();
+            style.visuals.window_stroke.color = theme.muted_foreground.into();
+            style.visuals.widgets.noninteractive.bg_stroke.color = theme.muted_foreground.into();
+            style.visuals.code_bg_color = theme.button_background.into();
 
             style.visuals.override_text_color = Some(theme.foreground.into());
             for widget in [
@@ -260,6 +268,7 @@ impl<'a> Ui<'a> {
         flow: UiFlow,
         scroll_actions: &[ScrollAction],
         pending_keys: &[KeyChord],
+        show_help: bool,
     ) -> Result<(FullOutput, Option<u64>)> {
         trace!("painting ui with flow {flow:?}");
         let mut run_error = None;
@@ -589,6 +598,17 @@ impl<'a> Ui<'a> {
                 })
             });
 
+            if show_help {
+                HelpModal::show(
+                    ctx,
+                    self.config.layout.window_dimensions.into(),
+                    self.is_initial_help_showing,
+                );
+                self.is_initial_help_showing = false;
+            } else {
+                self.is_initial_help_showing = true;
+            }
+
             match container_result {
                 Ok(scroll_area_output) => {
                     self.scroll_area_info = Some(ScrollAreaInfo {
@@ -745,6 +765,7 @@ impl<'a> Ui<'a> {
         info!("resetting ui states");
         self.active_source = None;
         self.is_initial_run = true;
+        self.is_initial_help_showing = true;
         self.hides_scroll_bar = self.config.scroll_bar_auto_hide;
     }
 

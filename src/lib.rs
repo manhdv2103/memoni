@@ -12,3 +12,9 @@ pub mod utils;
 pub mod widgets;
 pub mod x11_key_converter;
 pub mod x11_window;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AppMode {
+    Normal,
+    Help,
+}
