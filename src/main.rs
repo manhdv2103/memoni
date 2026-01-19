@@ -208,7 +208,7 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
     let mut input = Input::new(&window, &key_converter)?;
     let mut keymap_action = KeymapAction::new()?;
 
-    let persistence = Persistence::new(args.selection)?;
+    let mut persistence = Persistence::new(args.selection)?;
     let mut selection = Selection::new(
         persistence.load_selection_data()?,
         &window,
