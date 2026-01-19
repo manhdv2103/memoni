@@ -19,14 +19,14 @@ use log::{debug, error, info, log_enabled, trace, warn};
 use xdg_mime::SharedMimeInfo;
 
 use crate::{
+    ScrollAreaStateExt,
     config::{Config, Dimensions, LayoutConfig},
     freedesktop_cache::get_cached_thumbnail,
     keymap_action::{KeyChord, ScrollAction},
     ordered_hash_map::OrderedHashMap,
     selection::{SelectionItem, SelectionMetadata},
     utils::{is_image_mime, is_plaintext_mime, percent_decode, utf16le_to_string},
-    widgets::clipboard_button::ClipboardButton,
-    widgets::help_modal::HelpModal,
+    widgets::{clipboard_button::ClipboardButton, help_modal::HelpModal},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,6 +74,7 @@ const NOTO_EMOJI: &[u8] = include_bytes!(concat!(
 
 #[derive(Debug)]
 struct ScrollAreaInfo {
+    id: egui::Id,
     rect: Rect,
     content_rects: HashMap<u64, Rect>,
     offset: f32,
@@ -96,10 +97,10 @@ pub struct Ui<'a> {
     active_source: Option<ActiveSource>,
     scroll_area_info: Option<ScrollAreaInfo>,
     is_initial_run: bool,
-    is_initial_help_showing: bool,
     hides_scroll_bar: bool,
     button_widgets: HashMap<u64, ClipboardButton>,
     fallback: Fallback,
+    help_modal: HelpModal,
 }
 
 impl<'a> Ui<'a> {
@@ -176,7 +177,6 @@ impl<'a> Ui<'a> {
             active_source: None,
             scroll_area_info: None,
             is_initial_run: true,
-            is_initial_help_showing: true,
             hides_scroll_bar: config.scroll_bar_auto_hide,
             button_widgets: HashMap::new(),
             fallback: Fallback {
@@ -184,6 +184,7 @@ impl<'a> Ui<'a> {
                 file: fallback_file,
                 directory: fallback_dir,
             },
+            help_modal: HelpModal::new(),
         })
     }
 
@@ -542,6 +543,13 @@ impl<'a> Ui<'a> {
 
             self.item_widget_ids.clear();
 
+            if self.is_initial_run
+                && let Some(scroll_area) = &self.scroll_area_info
+                && let Err(e) = egui::scroll_area::State::reset_velocity(ctx, scroll_area.id)
+            {
+                debug!("failed to reset main scroll area velocity: {e}");
+            }
+
             let mut content_sizes = HashMap::new();
             let container_result = Self::container(
                 ctx,
@@ -598,14 +606,10 @@ impl<'a> Ui<'a> {
             });
 
             if show_help {
-                HelpModal::show(
-                    ctx,
-                    self.config.layout.window_dimensions.into(),
-                    self.is_initial_help_showing,
-                );
-                self.is_initial_help_showing = false;
+                self.help_modal
+                    .show(ctx, self.config.layout.window_dimensions.into());
             } else {
-                self.is_initial_help_showing = true;
+                self.help_modal.hide();
             }
 
             if !pending_keys.is_empty() {
@@ -615,6 +619,7 @@ impl<'a> Ui<'a> {
             match container_result {
                 Ok(scroll_area_output) => {
                     self.scroll_area_info = Some(ScrollAreaInfo {
+                        id: scroll_area_output.id,
                         rect: scroll_area_output.inner_rect,
                         content_rects: content_sizes,
                         offset: scroll_area_output.state.offset[1],
@@ -773,8 +778,8 @@ impl<'a> Ui<'a> {
         info!("resetting ui states");
         self.active_source = None;
         self.is_initial_run = true;
-        self.is_initial_help_showing = true;
         self.hides_scroll_bar = self.config.scroll_bar_auto_hide;
+        self.help_modal.hide();
     }
 
     pub fn build_button_widget(&mut self, item: &SelectionItem) -> Result<()> {

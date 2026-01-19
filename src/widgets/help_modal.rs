@@ -2,13 +2,24 @@ use egui::{
     Align, Area, Color32, Context, Frame, Id, Key, Layout, Modal, RichText, ScrollArea, Separator,
     TextStyle, Vec2, Widget,
 };
+use log::debug;
 
-use crate::keymap_action::ACTION_KEYMAPS;
+use crate::{ScrollAreaStateExt, keymap_action::ACTION_KEYMAPS};
 
-pub struct HelpModal;
+pub struct HelpModal {
+    scroll_area_id: Option<egui::Id>,
+    is_first_render: bool,
+}
 
 impl HelpModal {
-    pub fn show(ctx: &Context, dimension: Vec2, is_first_render: bool) {
+    pub fn new() -> Self {
+        HelpModal {
+            scroll_area_id: None,
+            is_first_render: true,
+        }
+    }
+
+    pub fn show(&mut self, ctx: &Context, dimension: Vec2) {
         let margin = 24.0;
         let spacing = 10.0;
         Modal::new(Id::new("help_modal"))
@@ -45,11 +56,16 @@ impl HelpModal {
                 let mut scroll_area = ScrollArea::vertical()
                     .auto_shrink(false)
                     .max_height(dimension.y - header_height - footer_height - total_spacing);
-                if is_first_render {
+                if self.is_first_render {
                     scroll_area = scroll_area.vertical_scroll_offset(0.0);
+                    if let Some(id) = self.scroll_area_id
+                        && let Err(e) = egui::scroll_area::State::reset_velocity(ctx, id)
+                    {
+                        debug!("failed to reset help modal's scroll area velocity: {e}");
+                    }
                 }
 
-                scroll_area.show(ui, |ui| {
+                let scroll_area_output = scroll_area.show(ui, |ui| {
                     let delta = ui.input(|i| {
                         let mut y = 0.0;
                         if i.key_pressed(Key::ArrowDown) {
@@ -125,8 +141,15 @@ impl HelpModal {
                         }
                     }
                 });
+                self.scroll_area_id = Some(scroll_area_output.id);
 
                 footer_ui(ui);
             });
+
+        self.is_first_render = false;
+    }
+
+    pub fn hide(&mut self) {
+        self.is_first_render = true;
     }
 }
