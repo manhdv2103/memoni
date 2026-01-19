@@ -211,6 +211,10 @@ impl<'a> X11Window<'a> {
 
     pub fn show_window(&self) -> Result<()> {
         debug!("mapping window");
+        self.conn.configure_window(
+            self.win_id.get(),
+            &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE),
+        )?;
         self.conn.map_window(self.win_id.get())?;
         Ok(())
     }
