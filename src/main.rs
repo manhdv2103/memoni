@@ -251,6 +251,7 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
             .map(|(id, _)| *id)
             .unwrap_or(0);
         let mut mode = AppMode::Normal;
+        let mut first_loop = true;
 
         info!("starting main event loop");
         'main_loop: loop {
@@ -317,6 +318,7 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
                 }
             }
 
+            let mut items_updated = false;
             while let Some(event) = window.conn.poll_for_event()? {
                 if let Event::Error(err) = event {
                     warn!("received X11 error: {err:?}");
@@ -372,6 +374,7 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
                     }
 
                     persistence.save_selection_data(&selection.items, &selection.metadata)?;
+                    items_updated = true;
                 }
             }
 
@@ -387,7 +390,7 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
                     .unwrap_or(0);
             }
 
-            if window_shown || will_show_window {
+            if first_loop || items_updated || window_shown || will_show_window {
                 let (key_actions, pointer_actions) =
                     keymap_action.process_input(&mut input.egui_input, mode);
                 let mut scroll_actions = vec![];
@@ -523,6 +526,8 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
             if let Some(id) = paste_item_id {
                 selection.paste(id, window.win_opened_pointer_pos.get(), paste_modifier)?;
             }
+
+            first_loop = false;
         }
         Ok(())
     })();
