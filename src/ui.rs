@@ -9,9 +9,9 @@ use std::{
 
 use anyhow::{Result, anyhow};
 use egui::{
-    Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, FontTweak, FullOutput,
-    Painter, RawInput, Rect, RichText, Stroke, TextWrapMode, TextureHandle, Vec2, WidgetText,
-    epaint, scroll_area::ScrollAreaOutput,
+    Area, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, FontTweak,
+    FullOutput, Order, Painter, RawInput, Rect, RichText, Stroke, TextWrapMode, TextureHandle,
+    Vec2, WidgetText, epaint, scroll_area::ScrollAreaOutput,
 };
 use fontconfig::Fontconfig;
 use image::{GenericImageView, RgbaImage};
@@ -548,7 +548,6 @@ impl<'a> Ui<'a> {
                 self.config,
                 next_scroll_offset,
                 self.hides_scroll_bar,
-                pending_keys,
                 |ui| {
                     if selection_items.is_empty() {
                         ui.centered_and_justified(|ui| {
@@ -609,6 +608,10 @@ impl<'a> Ui<'a> {
                 self.is_initial_help_showing = true;
             }
 
+            if !pending_keys.is_empty() {
+                Self::draw_pending_keys_overlay(ctx, pending_keys, self.config);
+            }
+
             match container_result {
                 Ok(scroll_area_output) => {
                     self.scroll_area_info = Some(ScrollAreaInfo {
@@ -639,7 +642,6 @@ impl<'a> Ui<'a> {
         config: &Config,
         scroll_offset: Option<f32>,
         hides_scroll_bar: bool,
-        pending_keys: &[KeyChord],
         add_contents: impl FnOnce(&mut egui::Ui) -> Result<()>,
     ) -> Result<ScrollAreaOutput<()>> {
         let LayoutConfig {
@@ -703,10 +705,6 @@ impl<'a> Ui<'a> {
                             }
                         });
                 }));
-
-                if !pending_keys.is_empty() {
-                    Self::draw_pending_keys_overlay(ui, pending_keys, config);
-                }
             });
 
         match err {
@@ -732,7 +730,7 @@ impl<'a> Ui<'a> {
         ));
     }
 
-    fn draw_pending_keys_overlay(ui: &mut egui::Ui, pending_keys: &[KeyChord], config: &Config) {
+    fn draw_pending_keys_overlay(ctx: &egui::Context, pending_keys: &[KeyChord], config: &Config) {
         let fg_color: Color32 = config.theme.pending_keys_foreground.into();
         let bg_color: Color32 = config.theme.pending_keys_background.into();
         let padding: Vec2 = config.layout.pending_keys_padding.into();
@@ -744,21 +742,31 @@ impl<'a> Ui<'a> {
             .collect::<Vec<_>>()
             .join(" ");
 
-        let painter = ui.painter();
-        let max_rect = ui.max_rect();
+        let rect = ctx.input(|i| i.content_rect());
+        Area::new("pending_keys_overlay".into())
+            .fixed_pos(rect.min)
+            .order(Order::Foreground)
+            .fade_in(false)
+            .interactable(false)
+            .show(ctx, |ui| {
+                ui.set_min_size(rect.size());
+                let painter = ui.painter();
+                let max_rect = ui.max_rect();
 
-        let galley = WidgetText::Text(label.to_string()).into_galley(
-            ui,
-            Some(TextWrapMode::Wrap),
-            max_rect.width() - margin.x * 2.0 - padding.x * 2.0,
-            FontId::proportional(config.font.pending_keys_text_size),
-        );
+                let galley = WidgetText::Text(label.to_string()).into_galley(
+                    ui,
+                    Some(TextWrapMode::Wrap),
+                    max_rect.width() - margin.x * 2.0 - padding.x * 2.0,
+                    FontId::proportional(config.font.pending_keys_text_size),
+                );
 
-        let galley_pos = max_rect.right_bottom() - margin - padding - galley.size();
-        let bg_rect = Rect::from_min_size(galley_pos - padding, galley.size() + padding * 2.0);
+                let galley_pos = max_rect.right_bottom() - margin - padding - galley.size();
+                let bg_rect =
+                    Rect::from_min_size(galley_pos - padding, galley.size() + padding * 2.0);
 
-        painter.rect_filled(bg_rect, config.layout.pending_keys_corner_radius, bg_color);
-        painter.galley(galley_pos, galley, fg_color);
+                painter.rect_filled(bg_rect, config.layout.pending_keys_corner_radius, bg_color);
+                painter.galley(galley_pos, galley, fg_color);
+            });
     }
 
     pub fn reset(&mut self) {
