@@ -200,7 +200,7 @@ impl<'a> Selection<'a> {
             atoms,
             request_tasks: HashMap::new(),
             incr_paste_tasks: HashMap::new(),
-            transfer_windows: TransferWindowPool::new(conn, root)?,
+            transfer_windows: TransferWindowPool::new(conn, root, selection_type)?,
             mime_atoms: RefCell::new(HashMap::new()),
             paste_item_id: None,
             next_paste_modifier: None,

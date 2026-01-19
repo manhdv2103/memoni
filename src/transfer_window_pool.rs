@@ -11,8 +11,10 @@ use x11rb::{
     xcb_ffi::XCBConnection,
 };
 
-const WIN_TITLE_PREFIX: &str = "Memoni transfer window ";
-const ATOM_PREFIX: &str = "TRANSFER_SELECTION_DATA_";
+use crate::selection::SelectionType;
+
+const WIN_TITLE_PREFIX: &str = "Memoni transfer window";
+const ATOM_PREFIX: &str = "TRANSFER_SELECTION_DATA";
 
 x11rb::atom_manager! {
     pub Atoms: AtomsCookie {
@@ -30,6 +32,7 @@ pub struct TransferWindow {
 pub struct TransferWindowPool<'a> {
     conn: &'a XCBConnection,
     parent_win: u32,
+    selection_type: SelectionType,
     atoms: Atoms,
     windows: VecDeque<TransferWindow>,
     counter: u8,
@@ -38,11 +41,16 @@ pub struct TransferWindowPool<'a> {
 }
 
 impl<'a> TransferWindowPool<'a> {
-    pub fn new(conn: &'a XCBConnection, parent_win: u32) -> Result<Self> {
+    pub fn new(
+        conn: &'a XCBConnection,
+        parent_win: u32,
+        selection_type: SelectionType,
+    ) -> Result<Self> {
         let atoms = Atoms::new(conn)?.reply()?;
         let mut window_pool = TransferWindowPool {
             conn,
             parent_win,
+            selection_type,
             atoms,
             windows: VecDeque::new(),
             counter: 0,
@@ -87,13 +95,16 @@ impl<'a> TransferWindowPool<'a> {
         let counter_str = self.counter.to_string();
 
         let transfer_window = self.create_util_window(
-            &format!("{WIN_TITLE_PREFIX}{counter_str}").into_bytes(),
+            &format!("{WIN_TITLE_PREFIX} {counter_str} - {}", self.selection_type).into_bytes(),
             &CreateWindowAux::default().event_mask(EventMask::PROPERTY_CHANGE),
             WindowClass::INPUT_ONLY,
         )?;
         let atom = self
             .conn
-            .intern_atom(false, &format!("{ATOM_PREFIX}{counter_str}").into_bytes())?
+            .intern_atom(
+                false,
+                &format!("{ATOM_PREFIX}_{}_{counter_str}", self.selection_type).into_bytes(),
+            )?
             .reply()?
             .atom;
 
