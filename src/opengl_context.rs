@@ -21,7 +21,7 @@ use std::{
 
 pub struct OpenGLContext<'a> {
     pub dimensions: [u32; 2],
-    pub background: (f32, f32, f32),
+    pub background: (f32, f32, f32, f32),
     pub painter: Painter,
     window: &'a X11Window<'a>,
     display: Display,
@@ -36,7 +36,7 @@ impl<'a> OpenGLContext<'a> {
         info!("creating GL display via EGL");
 
         let background_color: Color32 = config.theme.background.into();
-        let (r, g, b, _) = background_color.to_tuple();
+        let (r, g, b, a) = background_color.to_tuple();
         let dimensions = [
             config.layout.window_dimensions.width as _,
             config.layout.window_dimensions.height as _,
@@ -47,7 +47,6 @@ impl<'a> OpenGLContext<'a> {
             window.screen_num as _,
         );
 
-        // TODO: switch to glx for transparency
         let gl_display = unsafe {
             Display::new(
                 RawDisplayHandle::Xcb(display_handle),
@@ -89,7 +88,12 @@ impl<'a> OpenGLContext<'a> {
             display: gl_display,
             config: display_config,
             dimensions,
-            background: (r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0),
+            background: (
+                r as f32 / 255.0,
+                g as f32 / 255.0,
+                b as f32 / 255.0,
+                a as f32 / 255.0,
+            ),
             surface,
             context: Some(context),
             gl,
@@ -169,8 +173,8 @@ impl<'a> OpenGLContext<'a> {
             viewport_output: _,
         } = full_output;
 
-        let (r, g, b) = self.background;
-        self.painter.clear(self.dimensions, [r, g, b, 1.0]);
+        let (r, g, b, a) = self.background;
+        self.painter.clear(self.dimensions, [r, g, b, a]);
 
         let shapes = std::mem::take(&mut shapes);
         let clipped_primitives = egui_ctx.tessellate(shapes, pixels_per_point);

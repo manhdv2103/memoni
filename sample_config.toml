@@ -178,7 +178,7 @@ pending_keys_text_size = 14
 # Window background
 #
 # default: "#191919"
-background = "#2e313d"
+background = "#2e313dbf"
 
 # Primary text color
 #
@@ -193,7 +193,7 @@ muted_foreground = "#b0b0b0"
 # Button background
 #
 # default: "#2f2f2f"
-button_background = "#404552"
+button_background = "#404552bf"
 
 # Active/pressed button background
 #

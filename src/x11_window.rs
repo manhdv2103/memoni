@@ -113,13 +113,36 @@ impl<'a> X11Window<'a> {
         } = self;
         let win_id = win_id.get();
 
+        let target_depth = 32;
+        let target_visual_id = screen
+            .allowed_depths
+            .iter()
+            .find(|d| d.depth == target_depth)
+            .and_then(|d| {
+                d.visuals
+                    .iter()
+                    .find(|v| v.class == VisualClass::TRUE_COLOR)
+            })
+            .map(|v| v.visual_id);
+
+        let colormap = if let Some(visual_id) = target_visual_id {
+            let colormap_id = conn.generate_id()?;
+            conn.create_colormap(ColormapAlloc::NONE, colormap_id, screen.root, visual_id)?
+                .check()?;
+            Some(colormap_id)
+        } else {
+            None
+        };
+
         let win_aux = CreateWindowAux::new()
             .event_mask(*hidden_win_event_mask)
             .background_pixel(*config.theme.background)
             .win_gravity(Gravity::NORTH_WEST)
+            .colormap(colormap)
+            .border_pixel(0)
             .override_redirect(1);
         conn.create_window(
-            screen.root_depth,
+            target_visual_id.map(|_| target_depth).unwrap_or(screen.root_depth),
             win_id,
             screen.root,
             0,
@@ -128,9 +151,10 @@ impl<'a> X11Window<'a> {
             config.layout.window_dimensions.height,
             0,
             WindowClass::INPUT_OUTPUT,
-            0,
+            target_visual_id.unwrap_or(0),
             &win_aux,
-        )?;
+        )?
+        .check()?;
 
         let wm_name = format!("Memoni - {}", selection_type).into_bytes();
         conn.change_property8(
@@ -139,14 +163,16 @@ impl<'a> X11Window<'a> {
             AtomEnum::WM_NAME,
             AtomEnum::STRING,
             &wm_name,
-        )?;
+        )?
+        .check()?;
         conn.change_property8(
             PropMode::REPLACE,
             win_id,
             atoms._NET_WM_NAME,
             atoms.UTF8_STRING,
             &wm_name,
-        )?;
+        )?
+        .check()?;
         conn.change_property8(
             PropMode::REPLACE,
             win_id,
@@ -157,7 +183,8 @@ impl<'a> X11Window<'a> {
                 selection_type.to_string().to_lowercase()
             )
             .into_bytes(),
-        )?;
+        )?
+        .check()?;
 
         conn.change_property32(
             PropMode::REPLACE,
@@ -165,21 +192,24 @@ impl<'a> X11Window<'a> {
             atoms._NET_WM_STATE,
             AtomEnum::ATOM,
             &[atoms._NET_WM_STATE_ABOVE],
-        )?;
+        )?
+        .check()?;
         conn.change_property32(
             PropMode::REPLACE,
             win_id,
             atoms._NET_WM_PID,
             AtomEnum::CARDINAL,
             &[std::process::id()],
-        )?;
+        )?
+        .check()?;
         conn.change_property8(
             PropMode::REPLACE,
             win_id,
             atoms.WM_CLIENT_MACHINE,
             AtomEnum::STRING,
             gethostname::gethostname().as_bytes(),
-        )?;
+        )?
+        .check()?;
         conn.flush()?;
 
         Ok(())
