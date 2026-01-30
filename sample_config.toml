@@ -95,7 +95,7 @@ pointer_gap = 2
 # default: 10
 screen_edge_gap = 8
 
-# Size of preview thumbnails (px)
+# Size (px) of the preview thumbnail
 #
 # default: { width = 105, height = 70 }
 preview_size = { width = 40, height = 40 }
@@ -127,6 +127,16 @@ pending_keys_corner_radius = 2
 #
 # default: 4
 pin_size = 2
+
+# Size (px) of the color preview square
+#
+# default: 18
+color_preview_size = 12
+
+# Corner radius (px) of the color preview square
+#
+# default: 4
+color_preview_corner_radius = 6
 
 
 # Font configuration

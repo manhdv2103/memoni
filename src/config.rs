@@ -86,6 +86,8 @@ pub struct LayoutConfig {
     pub pending_keys_margin: XY<f32>,
     pub pending_keys_corner_radius: f32,
     pub pin_size: f32,
+    pub color_preview_size: f32,
+    pub color_preview_corner_radius: u8,
 }
 
 impl Default for LayoutConfig {
@@ -112,6 +114,8 @@ impl Default for LayoutConfig {
             pending_keys_margin: XY { x: 8.0, y: 8.0 },
             pending_keys_corner_radius: 5.0,
             pin_size: 4.0,
+            color_preview_size: 18.0,
+            color_preview_corner_radius: 4,
         }
     }
 }

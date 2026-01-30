@@ -1,3 +1,4 @@
+pub mod color;
 pub mod config;
 pub mod ext;
 pub mod freedesktop_cache;

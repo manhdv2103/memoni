@@ -5,8 +5,6 @@ use egui::{
     TextStyle, TextWrapMode, TextureHandle, Ui, Vec2, Widget, WidgetText,
 };
 
-const SUBLABEL_GAP: f32 = 3.0;
-
 #[derive(Default, Clone)]
 pub struct ClipboardButton {
     labels: Vec<WidgetText>,
@@ -22,6 +20,10 @@ pub struct ClipboardButton {
     pin_size: f32,
     pin_color: Color32,
     keyboard_hint: Option<String>,
+    color_preview: Option<Color32>,
+    color_preview_size: f32,
+    color_preview_corner_radius: u8,
+    color_preview_background: Option<TextureHandle>,
 }
 
 impl ClipboardButton {
@@ -108,10 +110,39 @@ impl ClipboardButton {
         self.keyboard_hint = Some(keyboard_hint.into());
         self
     }
+
+    #[inline]
+    pub fn color_preview(mut self, color_preview: impl Into<Color32>) -> Self {
+        self.color_preview = Some(color_preview.into());
+        self
+    }
+
+    #[inline]
+    pub fn color_preview_size(mut self, color_preview_size: f32) -> Self {
+        self.color_preview_size = color_preview_size;
+        self
+    }
+
+    #[inline]
+    pub fn color_preview_corner_radius(mut self, color_preview_corner_radius: u8) -> Self {
+        self.color_preview_corner_radius = color_preview_corner_radius;
+        self
+    }
+
+    #[inline]
+    pub fn color_preview_background(mut self, color_preview_background: TextureHandle) -> Self {
+        self.color_preview_background = Some(color_preview_background);
+        self
+    }
 }
 
 impl Widget for ClipboardButton {
     fn ui(self, ui: &mut Ui) -> Response {
+        // TODO: make these configurable?
+        let sublabel_gap = 3.0;
+        let keyboard_hint_gap = 10.0;
+        let keyboard_hint_size = 11.0;
+
         let padding = if self.preview.is_some()
             && let Some(with_preview_padding) = self.with_preview_padding
         {
@@ -127,10 +158,10 @@ impl Widget for ClipboardButton {
         if let Some((_, img_size)) = self.preview {
             text_width -= img_size.x;
         }
+        if self.color_preview.is_some() {
+            text_width -= self.color_preview_size + padding.x;
+        }
 
-        // TODO: make these configurable?
-        let keyboard_hint_gap = 10.0;
-        let keyboard_hint_size = 11.0;
         let keyboard_hint_galley = self.keyboard_hint.map(|sh| {
             WidgetText::RichText(Arc::new(
                 RichText::new(sh)
@@ -183,15 +214,21 @@ impl Widget for ClipboardButton {
             None
         };
 
-        let mut desired_height = 0.0;
         let text_height = galleys.iter().fold(0.0, |acc, g| acc + g.size().y)
             + sublabel_galley
                 .as_ref()
-                .map(|g| g.size().y + SUBLABEL_GAP)
+                .map(|g| g.size().y + sublabel_gap)
                 .unwrap_or(0.0)
             + img_src_galley.as_ref().map(|g| g.size().y).unwrap_or(0.0);
         let preview_height = self.preview.as_ref().map(|i| i.1.y).unwrap_or(0.0);
-        desired_height += preview_height.max(text_height + padding.y * 2.0);
+        let color_preview_height = self
+            .color_preview
+            .as_ref()
+            .map(|_| self.color_preview_size + padding.y * 2.0)
+            .unwrap_or(0.0);
+        let desired_height = preview_height
+            .max(color_preview_height)
+            .max(text_height + padding.y * 2.0);
 
         let (rect, response) =
             ui.allocate_at_least(Vec2::new(desired_width, desired_height), Sense::CLICK);
@@ -228,6 +265,37 @@ impl Widget for ClipboardButton {
                 preview.paint_at(ui, preview_rect);
 
                 assert!(preview_rect.width() == size.x);
+                cursor_x += preview_rect.width();
+            }
+
+            if let Some(color_preview) = self.color_preview {
+                cursor_x += padding.x;
+
+                let preview_rect = Rect::from_center_size(
+                    egui::pos2(cursor_x + self.color_preview_size / 2.0, rect.center().y),
+                    Vec2::splat(self.color_preview_size),
+                );
+
+                if let Some(background_texture) = self.color_preview_background {
+                    let preview_background = Image::from_texture(&background_texture)
+                        .maintain_aspect_ratio(true)
+                        .corner_radius(CornerRadius::same(self.color_preview_corner_radius));
+                    preview_background.paint_at(ui, preview_rect);
+                }
+
+                ui.painter().rect_filled(
+                    preview_rect,
+                    CornerRadius::same(self.color_preview_corner_radius),
+                    color_preview,
+                );
+
+                ui.painter().rect_stroke(
+                    preview_rect,
+                    CornerRadius::same(self.color_preview_corner_radius),
+                    Stroke::new(1.2, visuals.fg_stroke.color),
+                    StrokeKind::Outside,
+                );
+
                 cursor_x += preview_rect.width();
             }
 

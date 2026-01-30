@@ -9,9 +9,9 @@ use std::{
 
 use anyhow::{Result, anyhow};
 use egui::{
-    Area, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, FontTweak,
-    FullOutput, Order, Painter, RawInput, Rect, RichText, Stroke, TextWrapMode, TextureHandle,
-    Vec2, WidgetText, epaint, scroll_area::ScrollAreaOutput,
+    Area, Color32, ColorImage, CornerRadius, FontData, FontDefinitions, FontFamily, FontId,
+    FontTweak, FullOutput, Order, Painter, RawInput, Rect, RichText, Stroke, TextWrapMode,
+    TextureHandle, TextureOptions, Vec2, WidgetText, epaint, scroll_area::ScrollAreaOutput,
 };
 use fontconfig::Fontconfig;
 use image::{GenericImageView, RgbaImage};
@@ -20,6 +20,7 @@ use xdg_mime::SharedMimeInfo;
 
 use crate::{
     ScrollAreaStateExt,
+    color::parse_color,
     config::{Config, Dimensions, LayoutConfig},
     freedesktop_cache::get_cached_thumbnail,
     keymap_action::{KeyChord, ScrollAction},
@@ -101,6 +102,7 @@ pub struct Ui<'a> {
     button_widgets: HashMap<u64, ClipboardButton>,
     fallback: Fallback,
     help_modal: HelpModal,
+    color_preview_background_texture: TextureHandle,
 }
 
 impl<'a> Ui<'a> {
@@ -167,6 +169,13 @@ impl<'a> Ui<'a> {
         let fallback_file = image::load_from_memory(FALLBACK_FILE_BYTES)?.to_rgba8();
         let fallback_dir = image::load_from_memory(FALLBACK_DIR_BYTES)?.to_rgba8();
 
+        let color_preview_background_image = make_alpha_checkerboard_image(6);
+        let color_preview_background_texture = egui_ctx.load_texture(
+            "color_preview_background",
+            color_preview_background_image,
+            TextureOptions::NEAREST,
+        );
+
         Ok(Ui {
             egui_ctx,
             config,
@@ -185,6 +194,7 @@ impl<'a> Ui<'a> {
                 directory: fallback_dir,
             },
             help_modal: HelpModal::new(),
+            color_preview_background_texture,
         })
     }
 
@@ -859,7 +869,10 @@ impl<'a> Ui<'a> {
             .underline_offset(config.font.underline_offset)
             .with_preview_padding(config.layout.button_with_preview_padding)
             .pin_size(config.layout.pin_size)
-            .pin_color(config.theme.pin_color);
+            .pin_color(config.theme.pin_color)
+            .color_preview_size(config.layout.color_preview_size)
+            .color_preview_corner_radius(config.layout.color_preview_corner_radius)
+            .color_preview_background(self.color_preview_background_texture.clone());
 
         if let Some((action, file_uris)) = files {
             let file_paths = file_uris
@@ -931,6 +944,9 @@ impl<'a> Ui<'a> {
             }
         } else if let Some(text) = text_content {
             btn = btn.label(normalize_display_string(text));
+            if let Some(color) = parse_color(text) {
+                btn = btn.color_preview(color);
+            }
         } else {
             btn = btn.label(RichText::new("[unknown]").color(config.theme.muted_foreground));
         }
@@ -1240,6 +1256,26 @@ pub fn load_svg(svg_bytes: &[u8], size_hint: Vec2) -> Result<(RgbaImage, (u32, u
         .ok_or_else(|| anyhow!("failed to create RgbaImage"))?,
         (w, h),
     ))
+}
+
+fn make_alpha_checkerboard_image(cell_count_per_line: usize) -> ColorImage {
+    let cell_size = 1;
+    let size = cell_count_per_line * cell_size;
+
+    let mut pixels = vec![];
+    for y in 0..size {
+        for x in 0..size {
+            let cx = x / cell_size;
+            let cy = y / cell_size;
+            pixels.push(if (cx + cy) & 1 == 0 {
+                Color32::LIGHT_GRAY
+            } else {
+                Color32::GRAY
+            });
+        }
+    }
+
+    ColorImage::new([size, size], pixels)
 }
 
 fn normalize_display_string(s: &str) -> String {
