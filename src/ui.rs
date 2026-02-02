@@ -444,9 +444,12 @@ impl<'a> Ui<'a> {
                 && self.prev_active_idx == active_idx
                 && let Some(scroll_info) = &self.scroll_area_info
                 && let Some(active_rect) = scroll_info.content_rects.get(active_id)
-                && !scroll_info.rect.contains_rect(*active_rect)
+                && let scroll_rect = scroll_info
+                    .rect
+                    .shrink2(egui::vec2(0.0, layout.window_padding.y as f32))
+                && !scroll_rect.contains_rect(*active_rect)
             {
-                let active_rect_above_view = active_rect.min.y < scroll_info.rect.min.y;
+                let active_rect_above_view = active_rect.min.y < scroll_rect.min.y;
                 #[allow(clippy::collapsible_else_if)]
                 let near_idx_offset = if flow == UiFlow::TopToBottom {
                     if active_rect_above_view { 0 } else { 1 }
@@ -457,9 +460,9 @@ impl<'a> Ui<'a> {
                 let found_idx = selection_items.binary_search_by(|(k, _)| {
                     let rect = scroll_info.content_rects.get(k).unwrap_or(&Rect::ZERO);
                     let order = if active_rect_above_view {
-                        rect.min.y.total_cmp(&scroll_info.rect.min.y)
+                        rect.min.y.total_cmp(&scroll_rect.min.y)
                     } else {
-                        rect.max.y.total_cmp(&scroll_info.rect.max.y)
+                        rect.max.y.total_cmp(&scroll_rect.max.y)
                     };
 
                     if flow == UiFlow::TopToBottom {
@@ -514,46 +517,50 @@ impl<'a> Ui<'a> {
                 || (flow == UiFlow::BottomToTop && !content_overflowed);
             let sets_active_scroll_offset =
                 self.prev_active_id != *active_id || self.prev_active_idx != active_idx;
-            let next_scroll_offset = if (sets_default_scroll_offset
-                || sets_active_scroll_offset
-                || items_removed)
-                && let Some(scroll_area) = &self.scroll_area_info
-            {
-                let scroll_rect = scroll_area.rect;
-                let scroll_offset = scroll_area.offset;
-
-                if sets_default_scroll_offset {
-                    if flow == UiFlow::TopToBottom {
-                        Some(0.0)
-                    } else {
-                        Some(scroll_content_size - scroll_rect.height())
-                    }
-                } else
-                // Force content to be pushed down to fill the removed items' space when at the bottom of the scroll area
-                if items_removed
-                    && content_overflowed
-                    && scroll_offset + scroll_rect.height() > scroll_content_size
-                {
-                    Some(scroll_content_size - scroll_rect.height())
-                } else if let Some(&active_rect) = scroll_area.content_rects.get(active_id)
-                    && !scroll_rect.contains_rect(active_rect)
+            let next_scroll_offset =
+                if (sets_default_scroll_offset || sets_active_scroll_offset || items_removed)
+                    && let Some(scroll_area) = &self.scroll_area_info
                 {
                     let padding = layout.window_padding.y as f32;
-                    if active_rect.top() < scroll_rect.top() + padding {
-                        Some(scroll_offset + active_rect.top() - padding)
+                    let scroll_rect = scroll_area.rect;
+                    let scroll_offset = scroll_area.offset;
+
+                    if sets_default_scroll_offset {
+                        if flow == UiFlow::TopToBottom {
+                            Some(0.0)
+                        } else {
+                            Some(scroll_content_size - scroll_rect.height())
+                        }
+                    } else
+                    // Force content to be pushed down to fill the removed items' space when at the bottom of the scroll area
+                    if items_removed
+                        && content_overflowed
+                        && scroll_offset + scroll_rect.height() > scroll_content_size
+                    {
+                        Some(scroll_content_size - scroll_rect.height())
+                    } else if let Some(&active_rect) = scroll_area.content_rects.get(active_id)
+                        && let unpadded_scroll_rect = scroll_rect.shrink2(egui::vec2(0.0, padding))
+                        && !unpadded_scroll_rect.contains_rect(active_rect)
+                    {
+                        if active_rect.top() < unpadded_scroll_rect.top() {
+                            Some(scroll_offset + active_rect.top() - padding)
+                        } else {
+                            Some(
+                                scroll_offset + active_rect.bottom()
+                                    - unpadded_scroll_rect.height()
+                                    - padding,
+                            )
+                        }
                     } else {
-                        Some(scroll_offset + active_rect.bottom() - scroll_rect.height() + padding)
+                        None
                     }
                 } else {
                     None
-                }
-            } else {
-                None
-            };
+                };
 
             self.item_widget_ids.clear();
 
-            if self.is_initial_run
+            if next_scroll_offset.is_some()
                 && let Some(scroll_area) = &self.scroll_area_info
                 && let Err(e) = egui::scroll_area::State::reset_velocity(ctx, scroll_area.id)
             {
