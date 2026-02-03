@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     ffi::CString,
-    fs,
+    fs, mem,
     path::{Path, PathBuf},
     str::FromStr as _,
     sync::{Arc, LazyLock},
@@ -21,7 +21,7 @@ use xdg_mime::SharedMimeInfo;
 use crate::{
     ScrollAreaStateExt,
     color::parse_color,
-    config::{Config, Dimensions, LayoutConfig},
+    config::{Config, Dimensions, LayoutConfig, ThemeConfig},
     freedesktop_cache::get_cached_thumbnail,
     keymap_action::{KeyChord, ScrollAction},
     ordered_hash_map::OrderedHashMap,
@@ -892,10 +892,10 @@ impl<'a> Ui<'a> {
                 .collect::<Vec<_>>();
             let mut path_iter = file_paths.iter();
             if let Some(path) = path_iter.next() {
-                btn = btn.append_label(format_path_str(path));
+                btn = btn.append_label(vec![format_path_str(path).into()]);
             }
             if let Some(path) = path_iter.next() {
-                btn = btn.append_label(format_path_str(path));
+                btn = btn.append_label(vec![format_path_str(path).into()]);
             }
             let more_count = path_iter.count();
 
@@ -945,17 +945,19 @@ impl<'a> Ui<'a> {
 
             if let Some((src, alt)) = img_metadata {
                 if !alt.is_empty() {
-                    btn = btn.label(normalize_display_string(&alt));
+                    btn = btn.label(build_display_text(&alt, &config.theme));
                 }
                 btn = btn.preview_source(&src);
             }
         } else if let Some(text) = text_content {
-            btn = btn.label(normalize_display_string(text));
+            btn = btn.label(build_display_text(text, &config.theme));
             if let Some(color) = parse_color(text) {
                 btn = btn.color_preview(color);
             }
         } else {
-            btn = btn.label(RichText::new("[unknown]").color(config.theme.muted_foreground));
+            btn = btn.label(vec![
+                RichText::new("[unknown]").color(config.theme.muted_foreground),
+            ]);
         }
 
         self.button_widgets.insert(item.id, btn);
@@ -1285,8 +1287,10 @@ fn make_alpha_checkerboard_image(cell_count_per_line: usize) -> ColorImage {
     ColorImage::new([size, size], pixels)
 }
 
-fn normalize_display_string(s: &str) -> String {
-    let mut res = String::with_capacity(s.len());
+fn build_display_text(s: &str, theme: &ThemeConfig) -> Vec<RichText> {
+    let mut text = vec![];
+
+    let mut str = String::with_capacity(s.len());
     let mut chars = s.chars().enumerate().peekable();
 
     let mut char_with_idx = chars.next();
@@ -1294,20 +1298,25 @@ fn normalize_display_string(s: &str) -> String {
         // Very very long string causes egui to choke on first render, even when we only display it
         // on a single line
         if i == 10_000 && chars.peek().is_some() {
-            res.push('…');
+            str.push('…');
             break;
         }
 
         match c {
             '\r' => {}
-            '\n' => res.push('⏎'),
-            _ => res.push(c),
+            '\n' => {
+                let prev_str = mem::take(&mut str);
+                text.push(prev_str.into());
+                text.push(RichText::new('⏎').color(theme.muted_foreground));
+            }
+            _ => str.push(c),
         }
 
         char_with_idx = chars.next();
     }
+    text.push(str.into());
 
-    res
+    text
 }
 
 fn format_path_str(path: &str) -> String {

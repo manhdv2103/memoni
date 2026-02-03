@@ -1,13 +1,14 @@
 use std::sync::Arc;
 
 use egui::{
-    Color32, CornerRadius, Image, Pos2, Rect, Response, RichText, Sense, Stroke, StrokeKind,
-    TextStyle, TextWrapMode, TextureHandle, Ui, Vec2, Widget, WidgetText,
+    Color32, CornerRadius, FontSelection, Galley, Image, Pos2, Rect, Response, RichText, Sense,
+    Stroke, StrokeKind, TextStyle, TextWrapMode, TextureHandle, Ui, Vec2, Widget,
+    WidgetText, text::LayoutJob,
 };
 
 #[derive(Default, Clone)]
 pub struct ClipboardButton {
-    labels: Vec<WidgetText>,
+    labels: Vec<Vec<RichText>>,
     sublabel: Option<WidgetText>,
     secondary_foreground: Option<Color32>,
     preview: Option<(TextureHandle, Vec2)>,
@@ -28,14 +29,14 @@ pub struct ClipboardButton {
 
 impl ClipboardButton {
     #[inline]
-    pub fn label(mut self, label: impl Into<WidgetText>) -> Self {
-        self.labels = vec![label.into()];
+    pub fn label(mut self, label: Vec<RichText>) -> Self {
+        self.labels = vec![label];
         self
     }
 
     #[inline]
-    pub fn append_label(mut self, label: impl Into<WidgetText>) -> Self {
-        self.labels.push(label.into());
+    pub fn append_label(mut self, label: Vec<RichText>) -> Self {
+        self.labels.push(label);
         self
     }
 
@@ -184,7 +185,8 @@ impl Widget for ClipboardButton {
             .labels
             .into_iter()
             .map(|l| {
-                l.into_galley(
+                rich_texts_to_galley(
+                    l,
                     ui,
                     Some(TextWrapMode::Truncate),
                     text_width,
@@ -356,4 +358,23 @@ impl Widget for ClipboardButton {
 
         response
     }
+}
+
+fn rich_texts_to_galley(
+    rich_texts: Vec<RichText>,
+    ui: &Ui,
+    wrap_mode: Option<TextWrapMode>,
+    available_width: f32,
+    fallback_font: impl Into<FontSelection>,
+) -> Arc<Galley> {
+    let valign = ui.text_valign();
+    let style = ui.style();
+    let fallback_font = fallback_font.into();
+
+    let mut layout_job = LayoutJob::default();
+    for text in rich_texts {
+        text.append_to(&mut layout_job, style, fallback_font.clone(), valign);
+    }
+
+    WidgetText::from(layout_job).into_galley(ui, wrap_mode, available_width, fallback_font)
 }
