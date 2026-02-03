@@ -1152,14 +1152,24 @@ fn get_file_thumbnail<P: AsRef<Path>>(
 fn get_file_icon_path<P: AsRef<Path>>(file: P) -> Result<Option<PathBuf>> {
     static SMI: LazyLock<SharedMimeInfo> = LazyLock::new(SharedMimeInfo::new);
 
-    let data_mime = SMI
-        .get_mime_type_for_data(&fs::read(&file)?)
-        .map(|(mime, _)| mime);
-    let ext_mime = file
+    let file_data = fs::read(&file)
+        .inspect_err(|e| {
+            warn!(
+                "failed to read {:?} to determine a suitable icon, falling back to generic icon: {e}",
+                &file.as_ref()
+            )
+        })
+        .ok();
+    let data_mime = file_data
         .as_ref()
-        .file_name()
-        .and_then(|name| name.to_str())
-        .and_then(|name| SMI.get_mime_types_from_file_name(name).first().cloned());
+        .and_then(|data| SMI.get_mime_type_for_data(data))
+        .map(|(mime, _)| mime);
+    let ext_mime = file_data.and_then(|_| {
+        file.as_ref()
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(|name| SMI.get_mime_types_from_file_name(name).first().cloned())
+    });
 
     let mime = if let Some(data_mime) = data_mime {
         if let Some(ext_mime) = ext_mime
