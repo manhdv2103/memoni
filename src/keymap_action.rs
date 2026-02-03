@@ -26,13 +26,14 @@ pub enum KeyOrPointerButton {
 impl KeyOrPointerButton {
     pub fn name(&self) -> Cow<'static, str> {
         match self {
-            KeyOrPointerButton::Key(key) => {
-                if *key >= Key::A && *key <= Key::Z {
-                    Cow::Owned(key.name().to_lowercase())
-                } else {
-                    Cow::Borrowed(key.symbol_or_name())
-                }
-            }
+            KeyOrPointerButton::Key(key) => match key {
+                &k if k >= Key::A && k <= Key::Z => Cow::Owned(key.name().to_lowercase()),
+                Key::ArrowUp => Cow::Borrowed("↑"),
+                Key::ArrowDown => Cow::Borrowed("↓"),
+                Key::ArrowLeft => Cow::Borrowed("←"),
+                Key::ArrowRight => Cow::Borrowed("→"),
+                _ => Cow::Borrowed(key.symbol_or_name()),
+            },
             KeyOrPointerButton::PointerButton(button) => Cow::Borrowed(match button {
                 PointerButton::Primary => "<pointer-1>",
                 PointerButton::Middle => "<pointer-2>",
