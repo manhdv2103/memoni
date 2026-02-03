@@ -60,4 +60,4 @@ See [sample_config.toml](./sample_config.toml) for a complete list of options an
 
 - [Noto Sans](https://fonts.google.com/noto/specimen/Noto+Sans) (SIL Open Font License)
 - [Noto Emoji](https://fonts.google.com/noto/specimen/Noto+Emoji) (SIL Open Font License)
-- [Noto Sans Symbols 2](https://fonts.google.com/noto/specimen/Noto+Sans+Symbols+2) (SIL Open Font License)
+- [Noto Sans Math](https://fonts.google.com/noto/specimen/Noto+Sans+Math) (SIL Open Font License)

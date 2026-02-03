@@ -147,7 +147,7 @@ color_preview_corner_radius = 6
 # Multiple fonts can be specified, where subsequent fonts act as fallbacks if earlier ones
 # do not contain the required glyphs (e.g., for emojis or specific languages).
 #
-# default: ["Noto Sans", "Noto Emoji", "Noto Sans Symbols 2"]
+# default: ["Noto Sans", "Noto Emoji", "Noto Sans Math"]
 family = ["DejaVu Sans", "JetBrainsMonoNL Nerd Font"]
 
 # Primary text size (pt)

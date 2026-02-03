@@ -64,9 +64,9 @@ const NOTO_SANS: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/assets/fonts/Noto_Sans/NotoSans-Regular.ttf"
 ));
-const NOTO_SYMBOLS: &[u8] = include_bytes!(concat!(
+const NOTO_MATH: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/assets/fonts/Noto_Sans_Symbols_2/NotoSansSymbols2-Regular.ttf"
+    "/assets/fonts/Noto_Sans_Math/NotoSansMath-Regular.ttf"
 ));
 const NOTO_EMOJI: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -124,13 +124,10 @@ impl<'a> Ui<'a> {
                 ..Default::default()
             })),
         );
-        // Mostly for the newline symbol (⏎)
+        // Mostly for the newline symbol (↵) and the tab symbol (⇥)
         fonts.font_data.insert(
-            "NotoSansSymbols2-Regular".to_owned(),
-            Arc::new(FontData::from_static(NOTO_SYMBOLS).tweak(FontTweak {
-                y_offset_factor: 0.175,
-                ..Default::default()
-            })),
+            "NotoSansMath-Regular".to_owned(),
+            Arc::new(FontData::from_static(NOTO_MATH)),
         );
 
         let mut font_family_names = vec![];
@@ -157,7 +154,7 @@ impl<'a> Ui<'a> {
 
         font_family_names.push("NotoSans-Regular".to_owned());
         font_family_names.push("NotoEmoji-Regular".to_owned());
-        font_family_names.push("NotoSansSymbols2-Regular".to_owned());
+        font_family_names.push("NotoSansMath-Regular".to_owned());
 
         fonts
             .families
@@ -1289,17 +1286,40 @@ fn make_alpha_checkerboard_image(cell_count_per_line: usize) -> ColorImage {
 
 fn build_display_text(s: &str, theme: &ThemeConfig) -> Vec<RichText> {
     let mut text = vec![];
+    let mut chars = s.chars();
+
+    let mut last_non_whitespace = None;
+    let mut trailing_whitespace_str = String::new();
+    let mut trailing_count = 0;
+    while let Some(c) = chars.next_back() {
+        trailing_count += 1;
+        if c == ' ' {
+            trailing_whitespace_str.push('·');
+        } else {
+            last_non_whitespace = Some(c);
+            break;
+        }
+    }
 
     let mut str = String::with_capacity(s.len());
-    let mut chars = s.chars().enumerate().peekable();
-
-    let mut char_with_idx = chars.next();
-    while let Some((i, c)) = char_with_idx {
+    let mut chars = chars.enumerate().peekable();
+    let mut is_leading_whitespace = true;
+    let mut i_c = chars.next();
+    while let Some((i, c)) = i_c {
         // Very very long string causes egui to choke on first render, even when we only display it
         // on a single line
-        if i == 10_000 && chars.peek().is_some() {
-            str.push('…');
-            break;
+        if i == (10_000 - trailing_count) && chars.peek().is_some() {
+            if is_leading_whitespace {
+                text.push(RichText::new(str).color(theme.muted_foreground));
+            }
+            text.push("…".into());
+            return text;
+        }
+
+        if c != ' ' && is_leading_whitespace {
+            is_leading_whitespace = false;
+            let prev_str = mem::take(&mut str);
+            text.push(RichText::new(prev_str).color(theme.muted_foreground));
         }
 
         match c {
@@ -1307,14 +1327,30 @@ fn build_display_text(s: &str, theme: &ThemeConfig) -> Vec<RichText> {
             '\n' => {
                 let prev_str = mem::take(&mut str);
                 text.push(prev_str.into());
-                text.push(RichText::new('⏎').color(theme.muted_foreground));
+                text.push(RichText::new('↵').color(theme.muted_foreground));
+            }
+            '\t' => {
+                let prev_str = mem::take(&mut str);
+                text.push(prev_str.into());
+                text.push(RichText::new(" ⇥ ").color(theme.muted_foreground));
+            }
+            ' ' if is_leading_whitespace => {
+                str.push('·');
             }
             _ => str.push(c),
         }
 
-        char_with_idx = chars.next();
+        i_c = chars.next();
+        if i_c.is_none()
+            && let Some(last_c) = last_non_whitespace
+        {
+            i_c = Some((i + 1, last_c));
+            last_non_whitespace = None;
+        }
     }
+
     text.push(str.into());
+    text.push(RichText::new(trailing_whitespace_str).color(theme.muted_foreground));
 
     text
 }
