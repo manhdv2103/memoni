@@ -33,13 +33,21 @@ pub struct Persistence {
 }
 
 impl Persistence {
-    pub fn new(selection_type: SelectionType) -> Result<Self> {
+    pub fn new(selection_type: SelectionType, display_id: &Option<String>) -> Result<Self> {
         let xdg_data_home = dirs::data_dir()
             .ok_or_else(|| anyhow!("data directory not found"))?
             .join("memoni");
         fs::create_dir_all(&xdg_data_home)?;
 
-        let file_name = format!("{}_selections", selection_type.to_string().to_lowercase());
+        let file_name = if let Some(id) = display_id {
+            format!(
+                "{}_{}_selections",
+                selection_type.to_string().to_lowercase(),
+                id
+            )
+        } else {
+            format!("{}_selections", selection_type.to_string().to_lowercase())
+        };
         let file_path = xdg_data_home.join(file_name);
         let temp_file_path = file_path.with_extension("tmp");
 

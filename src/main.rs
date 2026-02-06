@@ -61,6 +61,14 @@ fn main() -> Result<()> {
         .init();
     info!("logger initialized at level: {log_level}");
 
+    let display_id = std::env::var("DISPLAY")
+        .inspect_err(|e| warn!("failed to read DISPLAY environment variable: {}", e))
+        .ok()
+        .as_deref()
+        .and_then(|s| s.strip_prefix(':'))
+        .map(|s| s.to_string())
+        .filter(|s| s != "0"); // only use if it's not the default display ":0"
+
     debug!("ensuring socket dir exists: {SOCKET_DIR}");
     let socket_dir = Path::new(SOCKET_DIR);
     fs::create_dir_all(socket_dir)?;
@@ -70,15 +78,25 @@ fn main() -> Result<()> {
             info!("starting client mode with selection: {}", args.selection);
             debug!("client args: {args:#?}");
 
-            let socket_path = socket_dir.join(format!("{}.sock", args.selection));
-            client(args, &socket_path)?
+            let socket_file_name = if let Some(id) = &display_id {
+                format!("{}_{}.sock", args.selection, id)
+            } else {
+                format!("{}.sock", args.selection)
+            };
+            let socket_path = socket_dir.join(socket_file_name);
+            client(args, &socket_path, display_id)?
         }
         Args::Server(args) => {
             info!("starting server mode with selection: {}", args.selection);
             debug!("server args: {args:#?}");
 
-            let socket_path = socket_dir.join(format!("{}.sock", args.selection));
-            server(args, &socket_path)?
+            let socket_file_name = if let Some(id) = &display_id {
+                format!("{}_{}.sock", args.selection, id)
+            } else {
+                format!("{}.sock", args.selection)
+            };
+            let socket_path = socket_dir.join(socket_file_name);
+            server(args, &socket_path, display_id)?
         }
     }
 
@@ -181,11 +199,14 @@ OPTIONS:
     ))
 }
 
-fn client(args: ClientArgs, socket_path: &Path) -> Result<()> {
+fn client(args: ClientArgs, socket_path: &Path, display_id: Option<String>) -> Result<()> {
     if !fs::exists(socket_path)? {
         eprintln!(
-            "Error: memoni server for selection '{}' is not running",
-            args.selection
+            "Error: memoni server for selection \"{}\"{} is not running",
+            args.selection,
+            display_id
+                .map(|id| format!(" on display {:?}", id))
+                .unwrap_or_default()
         );
         std::process::exit(1);
     }
@@ -199,7 +220,7 @@ fn client(args: ClientArgs, socket_path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
+fn server(args: ServerArgs, socket_path: &Path, display_id: Option<String>) -> Result<()> {
     let config = Config::load(args.selection)?;
 
     let window = X11Window::new(&config, args.selection)?;
@@ -208,7 +229,7 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
     let mut input = Input::new(&window, &key_converter)?;
     let mut keymap_action = KeymapAction::new()?;
 
-    let mut persistence = Persistence::new(args.selection)?;
+    let mut persistence = Persistence::new(args.selection, &display_id)?;
     let mut selection = Selection::new(
         persistence.load_selection_data()?,
         &window,
@@ -231,8 +252,11 @@ fn server(args: ServerArgs, socket_path: &Path) -> Result<()> {
                 && io_err.kind() == io::ErrorKind::AddrInUse
             {
                 eprintln!(
-                    "Error: another server for selection '{}' is already running",
-                    args.selection
+                    "Error: another server for selection \"{}\"{} is already running",
+                    args.selection,
+                    display_id
+                        .map(|id| format!(" on display {:?}", id))
+                        .unwrap_or_default()
                 );
                 std::process::exit(1);
             } else {
