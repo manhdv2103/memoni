@@ -414,6 +414,16 @@ fn server(args: ServerArgs, socket_path: &Path, display_id: Option<String>) -> R
                 }
             }
 
+            if will_show_window && window_shown {
+                debug!("window already shown, ignoring show request");
+                will_show_window = false;
+            }
+
+            if will_hide_window && !window_shown {
+                debug!("window already hidden, ignoring hide request");
+                will_hide_window = false;
+            }
+
             if will_show_window {
                 mode = AppMode::Normal;
                 window.update_window_pos()?;
