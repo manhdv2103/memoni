@@ -8,6 +8,7 @@ pub mod opengl_context;
 pub mod ordered_hash_map;
 pub mod persistence;
 pub mod selection;
+pub mod timerfd_source;
 pub mod transfer_window_pool;
 pub mod ui;
 pub mod utils;

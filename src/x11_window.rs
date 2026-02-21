@@ -2,10 +2,9 @@ extern crate x11rb;
 
 use std::cell::Cell;
 use std::os::unix::ffi::OsStrExt as _;
-use std::{thread, time};
 
 use anyhow::Result;
-use log::{debug, info, warn};
+use log::{debug, info, trace, warn};
 use x11rb::connection::Connection;
 use x11rb::protocol::randr::ConnectionExt as _;
 use x11rb::protocol::xfixes::ConnectionExt as _;
@@ -15,6 +14,7 @@ use x11rb::xcb_ffi::XCBConnection;
 
 use crate::config::{Config, Dimensions, LayoutConfig, WindowPositionMode};
 use crate::selection::SelectionType;
+use crate::timerfd_source::TimerfdSource;
 
 x11rb::atom_manager! {
     pub Atoms: AtomsCookie {
@@ -36,6 +36,8 @@ struct Viewport {
     y: u32,
 }
 
+const MAX_GRAB_RETRIES: u8 = 255;
+
 pub struct X11Window<'a> {
     pub conn: XCBConnection,
     pub screen: Screen,
@@ -50,6 +52,8 @@ pub struct X11Window<'a> {
     hidden_win_event_mask: EventMask,
     win_pos: Cell<(i16, i16)>,
     win_placed_above_pointer: Cell<bool>,
+    keyboard_grab_retry_count: Cell<u8>,
+    pointer_grab_retry_count: Cell<u8>,
 }
 
 impl<'a> X11Window<'a> {
@@ -82,6 +86,8 @@ impl<'a> X11Window<'a> {
             win_pos: Cell::new((0, 0)),
             win_opened_pointer_pos: Cell::new((0, 0)),
             win_placed_above_pointer: Cell::new(false),
+            keyboard_grab_retry_count: Cell::new(0),
+            pointer_grab_retry_count: Cell::new(0),
         };
 
         info!("creating main window with id {win_id}");
@@ -142,7 +148,9 @@ impl<'a> X11Window<'a> {
             .border_pixel(0)
             .override_redirect(1);
         conn.create_window(
-            target_visual_id.map(|_| target_depth).unwrap_or(screen.root_depth),
+            target_visual_id
+                .map(|_| target_depth)
+                .unwrap_or(screen.root_depth),
             win_id,
             screen.root,
             0,
@@ -255,52 +263,85 @@ impl<'a> X11Window<'a> {
         Ok(())
     }
 
-    pub fn grab_input(&self) -> Result<()> {
-        // Have to repeatedly retry because if memoni is triggered from a window manager (e.g. i3)
-        // keymap, the WM is probably still grabbing the keyboard and not ungrabbing immediately
-        debug!("grabbing keyboard");
-        let mut grab_keyboard_success = false;
-        for _ in 0..100 {
-            let grab_keyboard = self.conn.grab_keyboard(
-                true,
-                self.screen.root,
-                x11rb::CURRENT_TIME,
-                GrabMode::ASYNC,
-                GrabMode::ASYNC,
-            )?;
-            if grab_keyboard.reply()?.status == GrabStatus::SUCCESS {
-                grab_keyboard_success = true;
-                break;
-            }
-            thread::sleep(time::Duration::from_millis(10));
-        }
-        if !grab_keyboard_success {
-            warn!("failed to grab keyboard");
+    // Have to retry because if memoni is triggered from a window manager (e.g. i3)
+    // keymap, the WM is probably still grabbing the keyboard and not ungrabbing immediately
+    pub fn grab_keyboard(&self, timer: &TimerfdSource) -> Result<()> {
+        let retry_count = self.keyboard_grab_retry_count.get();
+        if retry_count == 0 {
+            debug!("grabbing keyboard");
+        } else {
+            trace!("retrying to grab keyboard: retry {retry_count}");
         }
 
-        // Same reason as above, just applied to pointer keymaps
-        debug!("grabbing pointer");
-        let mut grab_pointer_success = false;
-        for _ in 0..100 {
-            let grab_pointer = self.conn.grab_pointer(
-                true,
-                self.screen.root,
-                EventMask::BUTTON_RELEASE | EventMask::BUTTON_MOTION | EventMask::POINTER_MOTION,
-                GrabMode::ASYNC,
-                GrabMode::ASYNC,
-                self.screen.root,
-                x11rb::NONE,
-                x11rb::CURRENT_TIME,
-            )?;
-            if grab_pointer.reply()?.status == GrabStatus::SUCCESS {
-                grab_pointer_success = true;
-                break;
+        let grab_keyboard = self.conn.grab_keyboard(
+            true,
+            self.screen.root,
+            x11rb::CURRENT_TIME,
+            GrabMode::ASYNC,
+            GrabMode::ASYNC,
+        )?;
+
+        if grab_keyboard.reply()?.status == GrabStatus::SUCCESS {
+            self.keyboard_grab_retry_count.set(0);
+        } else {
+            let new_count = self.keyboard_grab_retry_count.get() + 1;
+            if new_count < MAX_GRAB_RETRIES {
+                self.keyboard_grab_retry_count.set(new_count);
+                timer.set_timer(10)?;
+            } else {
+                warn!("failed to grab keyboard after {MAX_GRAB_RETRIES} retries");
+                self.keyboard_grab_retry_count.set(0);
             }
-            thread::sleep(time::Duration::from_millis(10));
         }
-        if !grab_pointer_success {
-            warn!("failed to grab pointer");
+        Ok(())
+    }
+
+    // Same reason to retry as above, just applied to pointer keymaps
+    pub fn grab_pointer(&self, timer: &TimerfdSource) -> Result<()> {
+        let retry_count = self.pointer_grab_retry_count.get();
+        if retry_count == 0 {
+            debug!("grabbing pointer");
+        } else {
+            trace!("retrying to grab pointer: retry {retry_count}");
         }
+
+        let grab_pointer = self.conn.grab_pointer(
+            true,
+            self.screen.root,
+            EventMask::BUTTON_RELEASE | EventMask::BUTTON_MOTION | EventMask::POINTER_MOTION,
+            GrabMode::ASYNC,
+            GrabMode::ASYNC,
+            self.screen.root,
+            x11rb::NONE,
+            x11rb::CURRENT_TIME,
+        )?;
+
+        if grab_pointer.reply()?.status == GrabStatus::SUCCESS {
+            self.pointer_grab_retry_count.set(0);
+        } else {
+            let new_count = self.pointer_grab_retry_count.get() + 1;
+            if new_count < MAX_GRAB_RETRIES {
+                self.pointer_grab_retry_count.set(new_count);
+                timer.set_timer(10)?;
+            } else {
+                warn!("failed to grab pointer after {MAX_GRAB_RETRIES} retries");
+                self.pointer_grab_retry_count.set(0);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn cancel_grab_retries(
+        &self,
+        keyboard_timer: &TimerfdSource,
+        pointer_timer: &TimerfdSource,
+    ) -> Result<()> {
+        debug!("canceling grab retries");
+
+        keyboard_timer.disarm()?;
+        self.keyboard_grab_retry_count.set(0);
+        pointer_timer.disarm()?;
+        self.pointer_grab_retry_count.set(0);
 
         Ok(())
     }

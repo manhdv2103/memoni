@@ -10,6 +10,7 @@ use memoni::keymap_action::{
 };
 use memoni::persistence::Persistence;
 use memoni::selection::Selection;
+use memoni::timerfd_source::TimerfdSource;
 use memoni::ui::{Ui, UiFlow};
 use memoni::x11_key_converter::X11KeyConverter;
 use memoni::x11_window::X11Window;
@@ -35,6 +36,8 @@ const SOCKET_DIR: &str = "/tmp/memoni/";
 const X11_TOKEN: mio::Token = mio::Token(0);
 const SIGNAL_TOKEN: mio::Token = mio::Token(1);
 const MEMONI_TOKEN: mio::Token = mio::Token(2);
+const KEYBOARD_GRAB_RETRY_TOKEN: mio::Token = mio::Token(3);
+const POINTER_GRAB_RETRY_TOKEN: mio::Token = mio::Token(4);
 
 enum Args {
     Client(ClientArgs),
@@ -245,25 +248,26 @@ fn server(args: ServerArgs, socket_path: &Path, display_id: Option<String>) -> R
         ui.build_button_widget(item)?;
     }
 
-    let (mut poll, socket_listener, mut signals) = match create_poll(&window.conn, socket_path) {
-        Ok(res) => res,
-        Err(err) => {
-            if let Some(io_err) = err.downcast_ref::<io::Error>()
-                && io_err.kind() == io::ErrorKind::AddrInUse
-            {
-                eprintln!(
-                    "Error: another server for selection \"{}\"{} is already running",
-                    args.selection,
-                    display_id
-                        .map(|id| format!(" on display {:?}", id))
-                        .unwrap_or_default()
-                );
-                std::process::exit(1);
-            } else {
-                return Err(err);
+    let (mut poll, socket_listener, mut signals, keyboard_grab_timer, pointer_grab_timer) =
+        match create_poll(&window.conn, socket_path) {
+            Ok(res) => res,
+            Err(err) => {
+                if let Some(io_err) = err.downcast_ref::<io::Error>()
+                    && io_err.kind() == io::ErrorKind::AddrInUse
+                {
+                    eprintln!(
+                        "Error: another server for selection \"{}\"{} is already running",
+                        args.selection,
+                        display_id
+                            .map(|id| format!(" on display {:?}", id))
+                            .unwrap_or_default()
+                    );
+                    std::process::exit(1);
+                } else {
+                    return Err(err);
+                }
             }
-        }
-    };
+        };
     let mut poll_events = mio::Events::with_capacity(8);
 
     let main_loop_result = (|| -> Result<()> {
@@ -337,6 +341,14 @@ fn server(args: ServerArgs, socket_path: &Path, display_id: Option<String>) -> R
                                 warn!("failed to read client command: {e:?}");
                             }
                         }
+                    }
+                    KEYBOARD_GRAB_RETRY_TOKEN => {
+                        keyboard_grab_timer.clear_event()?;
+                        window.grab_keyboard(&keyboard_grab_timer)?;
+                    }
+                    POINTER_GRAB_RETRY_TOKEN => {
+                        pointer_grab_timer.clear_event()?;
+                        window.grab_pointer(&pointer_grab_timer)?;
                     }
                     _ => unreachable!(),
                 }
@@ -530,7 +542,8 @@ fn server(args: ServerArgs, socket_path: &Path, display_id: Option<String>) -> R
 
             if will_show_window {
                 window.show_window()?;
-                window.grab_input()?;
+                window.grab_keyboard(&keyboard_grab_timer)?;
+                window.grab_pointer(&pointer_grab_timer)?;
                 window.enable_events()?;
                 window.conn.flush()?;
                 window_shown = true;
@@ -539,6 +552,7 @@ fn server(args: ServerArgs, socket_path: &Path, display_id: Option<String>) -> R
 
             if will_hide_window {
                 window.hide_window()?;
+                window.cancel_grab_retries(&keyboard_grab_timer, &pointer_grab_timer)?;
                 window.ungrab_input()?;
                 window.disable_events()?;
                 window.conn.flush()?;
@@ -568,7 +582,13 @@ fn server(args: ServerArgs, socket_path: &Path, display_id: Option<String>) -> R
 fn create_poll<P: AsRef<Path> + std::fmt::Debug>(
     conn: &XCBConnection,
     socket_path: P,
-) -> Result<(mio::Poll, UnixListener, Signals)> {
+) -> Result<(
+    mio::Poll,
+    UnixListener,
+    Signals,
+    TimerfdSource,
+    TimerfdSource,
+)> {
     let poll = mio::Poll::new()?;
 
     debug!("registering X11 events polling source");
@@ -604,5 +624,29 @@ fn create_poll<P: AsRef<Path> + std::fmt::Debug>(
         mio::Interest::READABLE,
     )?;
 
-    Ok((poll, listener, signals))
+    debug!("registering keyboard grab retry timer source");
+    let keyboard_grab_timer =
+        TimerfdSource::new().map_err(|e| anyhow!("failed to create keyboard grab timerfd: {e}"))?;
+    poll.registry().register(
+        &mut SourceFd(&keyboard_grab_timer.as_fd().as_raw_fd()),
+        KEYBOARD_GRAB_RETRY_TOKEN,
+        mio::Interest::READABLE,
+    )?;
+
+    debug!("registering pointer grab retry timer source");
+    let pointer_grab_timer =
+        TimerfdSource::new().map_err(|e| anyhow!("failed to create pointer grab timerfd: {e}"))?;
+    poll.registry().register(
+        &mut SourceFd(&pointer_grab_timer.as_fd().as_raw_fd()),
+        POINTER_GRAB_RETRY_TOKEN,
+        mio::Interest::READABLE,
+    )?;
+
+    Ok((
+        poll,
+        listener,
+        signals,
+        keyboard_grab_timer,
+        pointer_grab_timer,
+    ))
 }
