@@ -1,5 +1,5 @@
 use crate::{config::Config, x11_window::X11Window};
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, bail};
 use egui::Color32;
 use egui_glow::Painter;
 use glow::Context as GlowContext;
@@ -10,10 +10,12 @@ use glutin::{
     prelude::{GlDisplay as _, NotCurrentGlContext, PossiblyCurrentGlContext},
     surface::{GlSurface as _, Surface, SurfaceAttributesBuilder, WindowSurface},
 };
-use log::{info, trace};
-use raw_window_handle::{RawDisplayHandle, RawWindowHandle, XcbDisplayHandle, XcbWindowHandle};
+use log::{info, trace, warn};
+use raw_window_handle::{
+    RawDisplayHandle, RawWindowHandle, XcbDisplayHandle, XcbWindowHandle, XlibDisplayHandle,
+};
 use std::{
-    ffi::CString,
+    ffi::{CString, c_int},
     num::{NonZero, NonZeroU32},
     ptr::NonNull,
     sync::Arc,
@@ -42,17 +44,23 @@ impl<'a> OpenGLContext<'a> {
             config.layout.window_dimensions.height as _,
         ];
 
-        let display_handle = XcbDisplayHandle::new(
-            NonNull::new(window.conn.get_raw_xcb_connection()),
-            window.screen_num as _,
-        );
+        // NVIDIA's EGL does not implement EGL_EXT_platform_xcb, so passing an XCB handle
+        // causes libglvnd to skip NVIDIA and fall back to Mesa, which fails with
+        // "egl: failed to create dri2 screen". We open a throwaway Xlib display instead
+        // since NVIDIA only supports EGL_PLATFORM_X11_KHR with a raw Xlib Display*.
+        // All actual X11 work is still done via XCB.
+        let display_handle = get_xlib_display_handle(window.screen_num as _)
+            .inspect_err(|e| warn!("failed to get Xlib display handle, fallback to XCB: {}", e))
+            .map(RawDisplayHandle::Xlib)
+            .unwrap_or_else(|_| {
+                RawDisplayHandle::Xcb(XcbDisplayHandle::new(
+                    NonNull::new(window.conn.get_raw_xcb_connection()),
+                    window.screen_num as _,
+                ))
+            });
 
-        let gl_display = unsafe {
-            Display::new(
-                RawDisplayHandle::Xcb(display_handle),
-                glutin::display::DisplayApiPreference::Egl,
-            )?
-        };
+        let gl_display =
+            unsafe { Display::new(display_handle, glutin::display::DisplayApiPreference::Egl)? };
 
         let config_template_builder = ConfigTemplateBuilder::new()
             .prefer_hardware_accelerated(None)
@@ -194,5 +202,22 @@ impl<'a> OpenGLContext<'a> {
     pub fn destroy(&mut self) {
         info!("destroying painter");
         self.painter.destroy();
+    }
+}
+
+fn get_xlib_display_handle(screen: c_int) -> Result<XlibDisplayHandle> {
+    unsafe {
+        let lib = libloading::Library::new("libX11.so.6")?;
+        let open_display_func: libloading::Symbol<
+            unsafe extern "C" fn(*const i8) -> *mut std::ffi::c_void,
+        > = lib.get(b"XOpenDisplay")?;
+
+        let dpy = open_display_func(std::ptr::null());
+        if dpy.is_null() {
+            bail!("failed to open X11 display");
+        }
+
+        std::mem::forget(lib); // keep lib alive
+        Ok(XlibDisplayHandle::new(NonNull::new(dpy), screen))
     }
 }

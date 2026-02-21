@@ -589,7 +589,7 @@ version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330c60081dcc4c72131f8eb70510f1ac07223e5d4163db481a04a0befcffa412"
 dependencies = [
- "libloading",
+ "libloading 0.8.8",
 ]
 
 [[package]]
@@ -926,7 +926,7 @@ dependencies = [
  "cgl",
  "dispatch2",
  "glutin_egl_sys",
- "libloading",
+ "libloading 0.8.8",
  "objc2 0.6.1",
  "objc2-app-kit 0.3.1",
  "objc2-core-foundation",
@@ -1169,6 +1169,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "libloading"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "754ca22de805bb5744484a5b151a9e1a8e837d5dc232c2d7d8c2e3492edc8b60"
+dependencies = [
+ "cfg-if",
+ "windows-link 0.2.1",
+]
+
+[[package]]
 name = "libredox"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1258,6 +1268,7 @@ dependencies = [
  "glutin",
  "image",
  "lexopt",
+ "libloading 0.9.0",
  "log",
  "make_optional",
  "md-5",
@@ -3054,7 +3065,7 @@ dependencies = [
  "as-raw-xcb-connection",
  "gethostname",
  "libc",
- "libloading",
+ "libloading 0.8.8",
  "once_cell",
  "rustix 1.1.2",
  "x11rb-protocol",
