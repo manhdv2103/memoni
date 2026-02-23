@@ -282,6 +282,7 @@ impl<'a> X11Window<'a> {
         )?;
 
         if grab_keyboard.reply()?.status == GrabStatus::SUCCESS {
+            debug!("keyboard grabbed successfully");
             self.keyboard_grab_retry_count.set(0);
         } else {
             let new_count = self.keyboard_grab_retry_count.get() + 1;
@@ -317,6 +318,7 @@ impl<'a> X11Window<'a> {
         )?;
 
         if grab_pointer.reply()?.status == GrabStatus::SUCCESS {
+            debug!("pointer grabbed successfully");
             self.pointer_grab_retry_count.set(0);
         } else {
             let new_count = self.pointer_grab_retry_count.get() + 1;
