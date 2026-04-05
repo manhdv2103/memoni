@@ -72,7 +72,7 @@ button_with_preview_padding = { x = 4, y = 4 }
 
 # Radius (px) for button corners
 #
-# default: 7
+# default: 6
 button_corner_radius = 3
 
 # Spacing (px) between buttons

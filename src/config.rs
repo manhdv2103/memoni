@@ -100,7 +100,7 @@ impl Default for LayoutConfig {
             window_padding: XY { x: 8, y: 8 },
             button_padding: XY { x: 8.0, y: 8.0 },
             button_with_preview_padding: XY { x: 5.0, y: 5.0 },
-            button_corner_radius: 7,
+            button_corner_radius: 6,
             button_spacing: 5.0,
             scroll_bar_margin: 8.0,
             pointer_gap: 5,
